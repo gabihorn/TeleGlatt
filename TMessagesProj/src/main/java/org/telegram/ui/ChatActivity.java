@@ -2767,40 +2767,38 @@ public class ChatActivity extends BaseFragment implements
             return false;
         }
 
-        // Askan requirement #1: block large megagroups (> max_megagroup_size from server)
-        // TODO: participants_count may be 0 if chat was never fully loaded — in that case we
-        //       allow entry (fail-open). A determined user could exploit this by opening an
-        //       unloaded group before the count arrives. Acceptable trade-off for now.
-        if (currentChat != null && ChatObject.isMegagroup(currentChat)) {
-            int count = currentChat.participants_count;
-            int limit = AskanFilter.getInstance().getMaxMegagroupSize();
-            if (count > 0 && count > limit) {
+        // Askan requirements #1 + #2: block oversized megagroups, unauthorized channels, and bots.
+        // Discussion groups (megagroups linked to an approved channel) are exempt from the size limit.
+        if (currentChat != null) {
+            TLRPC.ChatFull chatFull = getMessagesController().getChatFull(currentChat.id);
+            if (AskanFilter.getInstance().isChatBlocked(currentChat, chatFull)) {
                 final TLRPC.Chat blockedChat = currentChat;
                 AndroidUtilities.runOnUIThread(() -> showBlockedDialog(blockedChat, null));
                 return false;
             }
+        }
+        if (AskanFilter.getInstance().isUserBlocked(currentUser)) {
+            final TLRPC.User blockedUser = currentUser;
+            AndroidUtilities.runOnUIThread(() -> showBlockedDialog(null, blockedUser));
+            return false;
         }
 
-        // Askan requirement #2: block unauthorized channels and bots
-        if (currentChat != null && ChatObject.isChannelAndNotMegaGroup(currentChat)) {
-            String idStr = String.valueOf(currentChat.id);
-            String username = currentChat.username;
-            boolean allowed = AskanFilter.getInstance().isChannelAllowed(idStr)
-                    || (username != null && AskanFilter.getInstance().isChannelAllowed(username));
-            if (!allowed) {
-                final TLRPC.Chat blockedChat = currentChat;
-                AndroidUtilities.runOnUIThread(() -> showBlockedDialog(blockedChat, null));
-                return false;
-            }
-        }
-        if (currentUser != null && currentUser.bot) {
-            String idStr = String.valueOf(currentUser.id);
-            String username = currentUser.username;
-            boolean allowed = AskanFilter.getInstance().isChannelAllowed(idStr)
-                    || (username != null && AskanFilter.getInstance().isChannelAllowed(username));
-            if (!allowed) {
-                final TLRPC.User blockedUser = currentUser;
-                AndroidUtilities.runOnUIThread(() -> showBlockedDialog(null, blockedUser));
+        // Askan requirement #9: content filter — block channel/bot whose name contains a blocked word
+        // Guard: isContentFilterEnabled() returns false immediately when filter is off (zero cost)
+        if (AskanFilter.getInstance().isContentFilterEnabled()) {
+            String nameToCheck = currentChat != null ? currentChat.title
+                    : (currentUser != null
+                        ? (currentUser.first_name != null ? currentUser.first_name : "")
+                            + " " + (currentUser.last_name != null ? currentUser.last_name : "")
+                        : "");
+            if (AskanFilter.getInstance().containsBlockedWord(nameToCheck.trim())) {
+                if (currentChat != null) {
+                    final TLRPC.Chat c = currentChat;
+                    AndroidUtilities.runOnUIThread(() -> showBlockedDialog(c, null));
+                } else if (currentUser != null) {
+                    final TLRPC.User u = currentUser;
+                    AndroidUtilities.runOnUIThread(() -> showBlockedDialog(null, u));
+                }
                 return false;
             }
         }
@@ -3309,6 +3307,7 @@ public class ChatActivity extends BaseFragment implements
 
     // Askan requirement #2: shown when user tries to open a blocked channel or bot.
     // Requirement #8 (request system): replace the stub Toast with a real POST /api/requests call.
+    // Askan requirement #2 + #8: blocked channel/bot dialog with real access-request flow
     private void showBlockedDialog(TLRPC.Chat chat, TLRPC.User user) {
         Context ctx = getParentActivity();
         if (ctx == null) return;
@@ -3318,15 +3317,34 @@ public class ChatActivity extends BaseFragment implements
         boolean isBot = user != null && user.bot;
         String subject = isBot ? "בוט" : "ערוץ";
 
+        // derive username/id for the request
+        final String chatUsername;
+        if (chat != null) {
+            chatUsername = (chat.username != null && !chat.username.isEmpty())
+                    ? chat.username : String.valueOf(chat.id);
+        } else if (user != null) {
+            chatUsername = (user.username != null && !user.username.isEmpty())
+                    ? user.username : String.valueOf(user.id);
+        } else {
+            chatUsername = "";
+        }
+        final String chatName = name;
+
         AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
         builder.setTitle(subject + " חסום");
         builder.setMessage(subject + " זה אינו מאושר לשימוש באפליקציה.\nניתן לשלוח בקשת גישה למנהל.");
         builder.setPositiveButton("בקש גישה", (dialog, which) -> {
-            // TODO requirement #8: send POST /api/requests with chat/user details
-            Toast.makeText(ctx, "בקשה תתווסף בקרוב", Toast.LENGTH_SHORT).show();
+            showAccessRequestNoteDialog(ctx, chatUsername, chatName, subject);
         });
         builder.setNegativeButton("סגור", null);
         builder.show();
+    }
+
+    // Askan requirement #8: delegates to shared AskanUiHelper
+    private void showAccessRequestNoteDialog(Context ctx, String chatUsername,
+                                              String chatName, String subject) {
+        org.telegram.messenger.askan.AskanUiHelper.showAccessRequestNoteDialog(
+                ctx, currentAccount, chatUsername, chatName, subject, null);
     }
 
     @Override

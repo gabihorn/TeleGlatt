@@ -12464,7 +12464,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
         boolean onlySelfStories = !isArchive() && getStoriesController().hasOnlySelfStories();
         boolean newVisibility;
-        if (isArchive()) {
+        // Askan requirement #6: block stories — hide stories bar entirely
+        if (!org.telegram.messenger.askan.AskanFilter.getInstance().shouldShowStories()) {
+            newVisibility = false;
+            onlySelfStories = false;
+        } else if (isArchive()) {
             newVisibility = !getStoriesController().getHiddenList().isEmpty();
         } else {
             newVisibility = !onlySelfStories && getStoriesController().hasStories();
@@ -13426,6 +13430,10 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     }
                 }
             }
+            // Askan: blocked chats screen
+            io.add(R.drawable.msg_block, "ערוצים חסומים", () ->
+                    presentFragment(new AskanBlockedChatsActivity()));
+
             if (getUserConfig().showCallsTab) {
                 io.add(R.drawable.msg_settings_old, getString(R.string.Settings), () -> {
                     presentFragment(new SettingsActivity());

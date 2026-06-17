@@ -375,6 +375,10 @@ public class StoryViewer implements NotificationCenter.NotificationCenterDelegat
         open(UserConfig.selectedAccount, context, storyItem, peerIds, position, storiesList, userStories, placeProvider, reversed);
     }
     public void open(int account, Context context, TL_stories.StoryItem storyItem, ArrayList<Long> peerIds, int position, StoriesController.StoriesList storiesList, TL_stories.PeerStories userStories, PlaceProvider placeProvider, boolean reversed) {
+        // Askan requirement #6: block stories — prevent viewer from opening
+        if (!org.telegram.messenger.askan.AskanFilter.getInstance().shouldShowStories()) {
+            return;
+        }
         if (!isContextSafe(context)) {
             doOnAnimationReadyRunnables.clear();
             return;

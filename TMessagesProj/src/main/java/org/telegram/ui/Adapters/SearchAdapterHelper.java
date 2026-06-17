@@ -252,12 +252,25 @@ public class SearchAdapterHelper {
                                         chat = chatsMap.get(peer.channel_id);
                                     }
                                     if (chat != null) {
+                                        // Askan requirement #9: content filter — hide chat with blocked keyword in name
+                                        if (org.telegram.messenger.askan.AskanFilter.getInstance().isContentFilterEnabled()
+                                                && org.telegram.messenger.askan.AskanFilter.getInstance().containsBlockedWord(chat.title)) {
+                                            continue;
+                                        }
                                         if (!allowChats || canAddGroupsOnly && !ChatObject.canAddBotsToChat(chat) || -chat.id == exceptDialogId || !filter(chat)) {
                                             continue;
                                         }
                                         localServerSearch.add(chat);
                                         globalSearchMap.put(-chat.id, chat);
                                     } else if (user != null) {
+                                        // Askan requirement #9: content filter — hide user with blocked keyword in name
+                                        if (org.telegram.messenger.askan.AskanFilter.getInstance().isContentFilterEnabled()) {
+                                            String fullName = (user.first_name != null ? user.first_name : "")
+                                                    + " " + (user.last_name != null ? user.last_name : "");
+                                            if (org.telegram.messenger.askan.AskanFilter.getInstance().containsBlockedWord(fullName.trim())) {
+                                                continue;
+                                            }
+                                        }
                                         if (canAddGroupsOnly || !allowBots && user.bot || !allowSelf && user.self || user.id == exceptDialogId || !filter(user)) {
                                             continue;
                                         }

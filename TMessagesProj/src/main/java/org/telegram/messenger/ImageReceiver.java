@@ -425,6 +425,12 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
     }
 
     public void setForUserOrChat(TLObject object, Drawable avatarDrawable, Object parentObject, boolean animationEnabled, int vectorType, boolean big) {
+        // Askan requirement #3: block profile photos — show initials-only avatar
+        if (!org.telegram.messenger.askan.AskanFilter.getInstance().shouldShowProfilePhotos()) {
+            setUseRoundForThumbDrawable(true);
+            setImageBitmap(avatarDrawable);
+            return;
+        }
         if (parentObject == null) {
             parentObject = object;
         }

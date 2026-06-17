@@ -1888,6 +1888,24 @@ public class MessageObject {
             fromUser = getUser(users, sUsers, message.from_id.user_id);
         }
 
+        // TODO Askan requirement #9 (future): if content filter is enabled, check messageOwner.message
+        // text via AskanFilter.containsBlockedWord() and replace with placeholder or skip.
+        // Insert here, before updateMessageText(), so the layout never renders blocked content.
+
+        // Askan requirement: block link preview — strip webpage media before any processing.
+        // Only strips TL_webPage (fully-loaded preview with visual content).
+        // Preserves telegram_background / telegram_theme (Telegram system links).
+        // Does NOT touch TL_messageMediaPhoto / Document / etc. (direct uploads are unaffected).
+        {
+            TLRPC.MessageMedia m = message.media;
+            if (m instanceof TLRPC.TL_messageMediaWebPage && m.webpage instanceof TLRPC.TL_webPage) {
+                String wpType = m.webpage.type;
+                if (!"telegram_background".equals(wpType) && !"telegram_theme".equals(wpType)) {
+                    message.media = new TLRPC.TL_messageMediaEmpty();
+                }
+            }
+        }
+
         updateMessageText(users, chats, sUsers, sChats);
         setType();
         if (generateLayout) {

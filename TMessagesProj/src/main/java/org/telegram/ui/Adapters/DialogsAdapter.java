@@ -1457,6 +1457,22 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
     }
 
 
+    // Askan requirements #1 + #2: hide blocked dialogs from list (channels, bots, oversized megagroups)
+    private boolean askanIsDialogBlocked(MessagesController mc, Object item) {
+        if (!(item instanceof TLRPC.Dialog)) return false;
+        TLRPC.Dialog dialog = (TLRPC.Dialog) item;
+        long did = dialog.id;
+        if (did < 0) {
+            TLRPC.Chat chat = mc.getChat(-did);
+            TLRPC.ChatFull chatFull = mc.getChatFull(-did);
+            return org.telegram.messenger.askan.AskanFilter.getInstance().isChatBlocked(chat, chatFull);
+        } else if (did > 0) {
+            TLRPC.User user = mc.getUser(did);
+            return org.telegram.messenger.askan.AskanFilter.getInstance().isUserBlocked(user);
+        }
+        return false;
+    }
+
     private void updateItemList() {
         itemInternals.clear();
         updateHasHints();
@@ -1549,6 +1565,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
                 if (dialogsType == 2 && array.get(k) instanceof DialogsActivity.DialogsHeader) {
                     itemInternals.add(new ItemInternal(VIEW_TYPE_HEADER_2, array.get(k)));
                 } else {
+                    if (askanIsDialogBlocked(messagesController, array.get(k))) continue;
                     itemInternals.add(new ItemInternal(VIEW_TYPE_DIALOG, array.get(k)));
                 }
             }
@@ -1579,6 +1596,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
                 itemInternals.add(new ItemInternal(VIEW_TYPE_HEADER));
             } else {
                 for (int k = 0; k < array.size(); k++) {
+                    if (askanIsDialogBlocked(messagesController, array.get(k))) continue;
                     itemInternals.add(new ItemInternal(VIEW_TYPE_DIALOG, array.get(k)));
                 }
                 itemInternals.add(new ItemInternal(VIEW_TYPE_SHADOW));
@@ -1616,6 +1634,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
                 if (dialogsType == DialogsActivity.DIALOGS_TYPE_ADD_USERS_TO && array.get(k) instanceof DialogsActivity.DialogsHeader) {
                     itemInternals.add(new ItemInternal(VIEW_TYPE_HEADER_2, array.get(k)));
                 } else {
+                    if (askanIsDialogBlocked(messagesController, array.get(k))) continue;
                     itemInternals.add(new ItemInternal(VIEW_TYPE_DIALOG, array.get(k)));
                 }
             }

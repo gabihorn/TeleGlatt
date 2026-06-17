@@ -515,6 +515,11 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
         notifyDataSetChanged();
     }
 
+    // Askan requirement #4: always true — method form prevents javac unreachable-code error
+    private boolean askanGlobalSearchBlocked() {
+        return org.telegram.messenger.askan.AskanFilter.getInstance() != null;
+    }
+
     private void searchMessagesInternal(final String query, int searchId) {
         if (needMessagesSearch == 0 || TextUtils.isEmpty(lastMessagesSearchString) && TextUtils.isEmpty(query)) {
             return;
@@ -539,6 +544,16 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
         }
 
         if (dialogsType == DialogsActivity.DIALOGS_TYPE_BOT_REQUEST_PEER) {
+            waitingResponseCount--;
+            if (delegate != null) {
+                delegate.searchStateChanged(waitingResponseCount > 0, true);
+                delegate.runResultsEnterAnimation();
+            }
+            return;
+        }
+
+        // Askan requirement #4: block global message search — prevents content leaks from blocked chats
+        if (askanGlobalSearchBlocked()) {
             waitingResponseCount--;
             if (delegate != null) {
                 delegate.searchStateChanged(waitingResponseCount > 0, true);

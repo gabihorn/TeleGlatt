@@ -7580,18 +7580,20 @@ public class ChatActivityEnterView extends FrameLayout implements
                 sendButton.setEffect(effectId = 0);
                 applyStoryToSendMessageParams(params);
                 params.invert_media = parentFragment != null && parentFragment.messagePreviewParams != null && parentFragment.messagePreviewParams.webpageTop;
-                if (parentFragment != null && parentFragment.getCurrentChat() != null && !ChatObject.canSendEmbed(parentFragment.getCurrentChat())) {
-                    params.searchLinks = false;
-                    params.mediaWebPage = null;
-                } else if (messageWebPage instanceof TLRPC.TL_webPagePending) {
-                    params.searchLinks = true;
-                    params.mediaWebPage = null;
-                } else if (messageWebPage != null) {
-                    params.mediaWebPage = new TLRPC.TL_messageMediaWebPage();
-                    params.mediaWebPage.webpage = messageWebPage;
-                    params.mediaWebPage.force_large_media = parentFragment != null && parentFragment.messagePreviewParams != null && !parentFragment.messagePreviewParams.webpageSmall;
-                    params.mediaWebPage.force_small_media = parentFragment != null && parentFragment.messagePreviewParams != null && parentFragment.messagePreviewParams.webpageSmall;
-                }
+                // Askan requirement: block link preview — never generate webpage preview on send.
+                // original if/else block (canSendEmbed / webPagePending / mediaWebPage) kept below as comment:
+                // if (parentFragment != null && parentFragment.getCurrentChat() != null && !ChatObject.canSendEmbed(parentFragment.getCurrentChat())) {
+                //     params.searchLinks = false; params.mediaWebPage = null;
+                // } else if (messageWebPage instanceof TLRPC.TL_webPagePending) {
+                //     params.searchLinks = true; params.mediaWebPage = null;
+                // } else if (messageWebPage != null) {
+                //     params.mediaWebPage = new TLRPC.TL_messageMediaWebPage();
+                //     params.mediaWebPage.webpage = messageWebPage;
+                //     params.mediaWebPage.force_large_media = ...;
+                //     params.mediaWebPage.force_small_media = ...;
+                // }
+                params.searchLinks = false;
+                params.mediaWebPage = null;
                 if (parentFragment != null) {
                     parentFragment.editingMessageObject = null;
                     parentFragment.foundWebPage = null;

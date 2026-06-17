@@ -95,6 +95,11 @@ public class StoriesUtilities {
     private final static RectF rectTmp = new RectF();
 
     public static void drawAvatarWithStory(long dialogId, Canvas canvas, ImageReceiver avatarImage, AvatarStoryParams params) {
+        // Askan requirement #6: block stories — never draw story ring
+        if (!org.telegram.messenger.askan.AskanFilter.getInstance().shouldShowStories()) {
+            drawAvatarWithStory(dialogId, canvas, avatarImage, false, params);
+            return;
+        }
         StoriesController storiesController = MessagesController.getInstance(UserConfig.selectedAccount).getStoriesController();
         boolean hasStories = storiesController.hasStories(dialogId);
         drawAvatarWithStory(dialogId, canvas, avatarImage, UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId() != dialogId && hasStories, params);

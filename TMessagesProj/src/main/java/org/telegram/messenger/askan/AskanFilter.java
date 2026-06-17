@@ -7,7 +7,9 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.telegram.messenger.ApplicationLoader;
+import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.FileLog;
+import org.telegram.tgnet.TLRPC;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -26,6 +28,7 @@ public class AskanFilter {
     private boolean showProfilePhotos = true;
     private boolean showStories = true;
     private int maxMegagroupSize = 250;
+    private boolean contentFilterEnabled = false;
     private final Set<String> globalAllow = new HashSet<>();
     private final Set<String> userAllow = new HashSet<>();
     private final Set<String> blockedWords = new HashSet<>();
@@ -84,6 +87,65 @@ public class AskanFilter {
         }).start();
     }
 
+    // ─── Send access request ─────────────────────────────────────────────────
+
+    public void sendAccessRequest(String phone, String chatUsername,
+                                   String chatName, String note,
+                                   Runnable onSuccess, Runnable onRejected) {
+        new Thread(() -> {
+            try {
+                URL url = new URL(SERVER_URL + "/api/requests");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                conn.setDoOutput(true);
+
+                JSONObject body = new JSONObject();
+                body.put("phone", phone);
+                body.put("chat_username", chatUsername);
+                body.put("chat_name", chatName != null ? chatName : "");
+                body.put("note", note != null ? note : "");
+
+                byte[] bodyBytes = body.toString().getBytes("UTF-8");
+                conn.getOutputStream().write(bodyBytes);
+
+                int status = conn.getResponseCode();
+                Log.d("AskanFilter", "sendAccessRequest → status " + status);
+
+                BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+
+                String json = sb.toString();
+                Log.d("AskanFilter", "sendAccessRequest ← " + json);
+
+                JSONObject resp = new JSONObject(json);
+                String respStatus = resp.optString("status", "");
+
+                android.os.Handler mainHandler = new android.os.Handler(
+                        android.os.Looper.getMainLooper());
+                if ("pending".equals(respStatus)) {
+                    if (onSuccess != null) mainHandler.post(onSuccess);
+                } else {
+                    if (onRejected != null) mainHandler.post(onRejected);
+                }
+
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: sendAccessRequest failed", e);
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                    if (onRejected != null) onRejected.run();
+                });
+            }
+        }).start();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     private void parseAndSave(String json) {
         try {
             JSONObject root = new JSONObject(json);
@@ -91,6 +153,7 @@ public class AskanFilter {
             boolean photosFlag = root.optBoolean("show_profile_photos", true);
             boolean storiesFlag = root.optBoolean("show_stories", true);
             int megagroupSize = root.optInt("max_megagroup_size", 250);
+            boolean filterEnabled = root.optBoolean("content_filter_enabled", false);
 
             // Server returns merged list as "allowed_chats"
             Set<String> newGlobal = new HashSet<>();
@@ -118,6 +181,7 @@ public class AskanFilter {
                 showProfilePhotos = photosFlag;
                 showStories = storiesFlag;
                 maxMegagroupSize = megagroupSize;
+                contentFilterEnabled = filterEnabled;
                 globalAllow.clear();
                 globalAllow.addAll(newGlobal);
                 userAllow.clear();
@@ -133,6 +197,7 @@ public class AskanFilter {
             editor.putBoolean("show_profile_photos", photosFlag);
             editor.putBoolean("show_stories", storiesFlag);
             editor.putInt("max_megagroup_size", megagroupSize);
+            editor.putBoolean("content_filter_enabled", filterEnabled);
             editor.putStringSet("global_allow", newGlobal);
             editor.putStringSet("user_allow", newUser);
             editor.putStringSet("blocked_words", newBlocked);
@@ -157,6 +222,7 @@ public class AskanFilter {
                 showProfilePhotos = prefs.getBoolean("show_profile_photos", true);
                 showStories = prefs.getBoolean("show_stories", true);
                 maxMegagroupSize = prefs.getInt("max_megagroup_size", 250);
+                contentFilterEnabled = prefs.getBoolean("content_filter_enabled", false);
 
                 Set<String> cachedGlobal = prefs.getStringSet("global_allow", null);
                 globalAllow.clear();
@@ -195,12 +261,17 @@ public class AskanFilter {
     }
 
     public synchronized boolean containsBlockedWord(String text) {
+        if (!contentFilterEnabled) return false; // zero-cost guard when filter is off
         if (text == null || text.isEmpty()) return false;
         String lower = text.toLowerCase();
         for (String word : blockedWords) {
             if (lower.contains(word)) return true;
         }
         return false;
+    }
+
+    public synchronized boolean isContentFilterEnabled() {
+        return contentFilterEnabled;
     }
 
     // חיפוש חסום אם אין מילים מותרות (ריזרב לשימוש עתידי)
@@ -210,5 +281,54 @@ public class AskanFilter {
 
     public synchronized int getMaxMegagroupSize() {
         return maxMegagroupSize;
+    }
+
+    // ─── Central block checks (shared by ChatActivity + DialogsAdapter) ────────
+
+    /**
+     * Returns true if the chat should be blocked.
+     * chatFull may be null — in that case the discussion-group exemption is skipped (fail-open).
+     */
+    public synchronized boolean isChatBlocked(TLRPC.Chat chat, TLRPC.ChatFull chatFull) {
+        if (chat == null) return false;
+
+        // Rule #1: oversized megagroup
+        if (ChatObject.isMegagroup(chat)) {
+            int count = chat.participants_count;
+            if (count > 0 && count > maxMegagroupSize) {
+                // Exempt discussion groups whose linked channel is approved
+                if (chatFull != null && chatFull.linked_chat_id != 0) {
+                    String linkedId = String.valueOf(chatFull.linked_chat_id);
+                    if (globalAllow.contains(linkedId) || userAllow.contains(linkedId)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // Rule #2: unauthorized channel
+        if (ChatObject.isChannelAndNotMegaGroup(chat)) {
+            String idStr = String.valueOf(chat.id);
+            String username = chat.username;
+            boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
+                    || (username != null && (globalAllow.contains(username) || userAllow.contains(username)));
+            return !allowed;
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns true if the user (bot) should be blocked.
+     */
+    public synchronized boolean isUserBlocked(TLRPC.User user) {
+        if (user == null || !user.bot) return false;
+        String idStr = String.valueOf(user.id);
+        String username = user.username;
+        boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
+                || (username != null && (globalAllow.contains(username) || userAllow.contains(username)));
+        return !allowed;
     }
 }

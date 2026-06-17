@@ -162,11 +162,23 @@ public class BackupImageView extends View {
     }
 
     public void setForUserOrChat(TLObject object, AvatarDrawable avatarDrawable) {
+        // Askan requirement #3: block profile photos — show initials-only avatar
+        if (!org.telegram.messenger.askan.AskanFilter.getInstance().shouldShowProfilePhotos()) {
+            imageReceiver.setImageBitmap(avatarDrawable);
+            onNewImageSet();
+            return;
+        }
         imageReceiver.setForUserOrChat(object, avatarDrawable);
         onNewImageSet();
     }
 
     public void setForUserOrChat(TLObject object, AvatarDrawable avatarDrawable, Object parent) {
+        // Askan requirement #3: block profile photos — show initials-only avatar
+        if (!org.telegram.messenger.askan.AskanFilter.getInstance().shouldShowProfilePhotos()) {
+            imageReceiver.setImageBitmap(avatarDrawable);
+            onNewImageSet();
+            return;
+        }
         imageReceiver.setForUserOrChat(object, avatarDrawable, parent);
         onNewImageSet();
     }
