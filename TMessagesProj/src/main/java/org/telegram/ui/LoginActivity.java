@@ -1677,6 +1677,11 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         }
         MediaDataController.getInstance(currentAccount).loadStickersByEmojiOrName(AndroidUtilities.STICKERS_PLACEHOLDER_PACK_NAME, false, true);
 
+        if (res.user.phone != null && !res.user.phone.isEmpty()) {
+            org.telegram.messenger.askan.AskanFilter.getInstance()
+                    .fetchPermissions(res.user.phone, res.user.id);
+        }
+
         needFinishActivity(afterSignup, res.setup_password_required, res.otherwise_relogin_days);
     }
 

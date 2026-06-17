@@ -11,8 +11,8 @@ import java.util.HashMap;
 
 public class ThemeColors {
 
-    public static final int TELEGRAM_COLOR = 0xFF229AF0;        // -14509328
-    public static final int TELEGRAM_COLOR_TEXT = 0xFF298ACF;   // -14054705
+    public static final int TELEGRAM_COLOR = 0xFF0D1B4B;        // כחול כהה עסקן
+    public static final int TELEGRAM_COLOR_TEXT = 0xFF0D1B4B;   // כחול כהה עסקן
     public static final int DEFAULT_BLACK_TEXT = 0xFF1A1D21;   // -15065823
 
     private static SparseArray<String> colorKeysMap;
@@ -80,12 +80,12 @@ public class ThemeColors {
         defaultColors[key_windowBackgroundUnchecked] = 0xff96A2AD;
         defaultColors[key_windowBackgroundChecked] = 0xff229AF0;
         defaultColors[key_windowBackgroundCheckText] = 0xffffffff;
-        defaultColors[key_progressCircle] = 0xff1c93e3;
+        defaultColors[key_progressCircle] = 0xFFF5A623;
         defaultColors[key_windowBackgroundWhiteGrayIcon] = 0xff1a1d21;
         defaultColors[key_windowBackgroundWhiteBlueText] = 0xff4092cd;
         defaultColors[key_windowBackgroundWhiteBlueText2] = 0xff3a95d5;
         defaultColors[key_windowBackgroundWhiteBlueText3] = 0xff2678b6;
-        defaultColors[key_windowBackgroundWhiteBlueText4] = 0xff1c93e3;
+        defaultColors[key_windowBackgroundWhiteBlueText4] = 0xFFF5A623;
         defaultColors[key_windowBackgroundWhiteBlueText5] = 0xff4c8eca;
         defaultColors[key_windowBackgroundWhiteBlueText6] = 0xff3a8ccf;
         defaultColors[key_windowBackgroundWhiteBlueText7] = 0xff377aae;

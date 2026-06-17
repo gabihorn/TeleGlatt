@@ -209,7 +209,9 @@ public class SearchAdapterHelper {
                                     }
                                     arrayList = res.my_results;
                                 } else {
-                                    arrayList = res.results;
+                                    // Askan requirement #4: block global search results
+                                    // arrayList = res.results;
+                                    continue;
                                 }
                                 for (int a = 0; a < arrayList.size(); a++) {
                                     TLRPC.Peer peer = arrayList.get(a);

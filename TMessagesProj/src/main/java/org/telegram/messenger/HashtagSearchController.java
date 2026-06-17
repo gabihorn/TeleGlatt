@@ -219,17 +219,26 @@ public class HashtagSearchController {
                 }
                 request = req;
             } else {
-                TLRPC.TL_channels_searchPosts req = new TLRPC.TL_channels_searchPosts();
-                req.flags |= 1;
-                req.hashtag = query;
-                req.limit = limit;
-                req.offset_peer = new TLRPC.TL_inputPeerEmpty();
-                if (search.lastOffsetPeer != null) {
-                    req.offset_rate = search.lastOffsetRate;
-                    req.offset_id = search.lastOffsetId;
-                    req.offset_peer = MessagesController.getInstance(currentAccount).getInputPeer(search.lastOffsetPeer);
-                }
-                request = req;
+                // Askan requirement #4: block global hashtag search (no specific channel context)
+                search.loading = false;
+                search.endReached = true;
+                search.count = 0;
+                NotificationCenter.getInstance(currentAccount).postNotificationName(
+                        NotificationCenter.hashtagSearchUpdated, guid, search.count,
+                        search.endReached, search.getMask(), search.selectedIndex, 0);
+                return;
+                // original:
+                // TLRPC.TL_channels_searchPosts req = new TLRPC.TL_channels_searchPosts();
+                // req.flags |= 1;
+                // req.hashtag = query;
+                // req.limit = limit;
+                // req.offset_peer = new TLRPC.TL_inputPeerEmpty();
+                // if (search.lastOffsetPeer != null) {
+                //     req.offset_rate = search.lastOffsetRate;
+                //     req.offset_id = search.lastOffsetId;
+                //     req.offset_peer = MessagesController.getInstance(currentAccount).getInputPeer(search.lastOffsetPeer);
+                // }
+                // request = req;
             }
         }
         final int[] reqId = new int[1];

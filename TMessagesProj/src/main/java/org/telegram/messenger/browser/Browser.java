@@ -411,15 +411,18 @@ public class Browser {
             FileLog.e(e);
         }
         try {
-            final boolean inappBrowser = (
-                allowInAppBrowser && BubbleActivity.instance == null &&
-                (SharedConfig.inappBrowser || isInstantViewOpen()) &&
-                TextUtils.isEmpty(browserPackage) &&
-                !RestrictedDomainsList.getInstance().isRestricted(AndroidUtilities.getHostAuthority(uri, true)) &&
-                (uri.getScheme() == null || "https".equals(uri.getScheme()) || "http".equals(uri.getScheme()) || "tonsite".equals(uri.getScheme()))
-                ||
-                isTonsite(uri.toString())
-            );
+            // Askan requirement #5: force external browser
+            // original:
+            // final boolean inappBrowser = (
+            //     allowInAppBrowser && BubbleActivity.instance == null &&
+            //     (SharedConfig.inappBrowser || isInstantViewOpen()) &&
+            //     TextUtils.isEmpty(browserPackage) &&
+            //     !RestrictedDomainsList.getInstance().isRestricted(AndroidUtilities.getHostAuthority(uri, true)) &&
+            //     (uri.getScheme() == null || "https".equals(uri.getScheme()) || "http".equals(uri.getScheme()) || "tonsite".equals(uri.getScheme()))
+            //     ||
+            //     isTonsite(uri.toString())
+            // );
+            final boolean inappBrowser = false;
             final boolean isIntentScheme = uri.getScheme() != null && uri.getScheme().equalsIgnoreCase("intent");
             if (internalUri && LaunchActivity.instance != null) {
                 openAsInternalIntent(LaunchActivity.instance, uri.toString(), forceNotInternalForApps, forceRequest, inCaseLoading);

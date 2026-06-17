@@ -105,6 +105,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Space;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
@@ -144,6 +145,7 @@ import org.telegram.messenger.ChannelBoostsController;
 import org.telegram.messenger.ChatMessageSharedResources;
 import org.telegram.messenger.ChatMessagesMetadataController;
 import org.telegram.messenger.ChatObject;
+import org.telegram.messenger.askan.AskanFilter;
 import org.telegram.messenger.ChatThemeController;
 import org.telegram.messenger.CodeHighlighting;
 import org.telegram.messenger.ContactsController;
@@ -2765,6 +2767,44 @@ public class ChatActivity extends BaseFragment implements
             return false;
         }
 
+        // Askan requirement #1: block large megagroups (> max_megagroup_size from server)
+        // TODO: participants_count may be 0 if chat was never fully loaded — in that case we
+        //       allow entry (fail-open). A determined user could exploit this by opening an
+        //       unloaded group before the count arrives. Acceptable trade-off for now.
+        if (currentChat != null && ChatObject.isMegagroup(currentChat)) {
+            int count = currentChat.participants_count;
+            int limit = AskanFilter.getInstance().getMaxMegagroupSize();
+            if (count > 0 && count > limit) {
+                final TLRPC.Chat blockedChat = currentChat;
+                AndroidUtilities.runOnUIThread(() -> showBlockedDialog(blockedChat, null));
+                return false;
+            }
+        }
+
+        // Askan requirement #2: block unauthorized channels and bots
+        if (currentChat != null && ChatObject.isChannelAndNotMegaGroup(currentChat)) {
+            String idStr = String.valueOf(currentChat.id);
+            String username = currentChat.username;
+            boolean allowed = AskanFilter.getInstance().isChannelAllowed(idStr)
+                    || (username != null && AskanFilter.getInstance().isChannelAllowed(username));
+            if (!allowed) {
+                final TLRPC.Chat blockedChat = currentChat;
+                AndroidUtilities.runOnUIThread(() -> showBlockedDialog(blockedChat, null));
+                return false;
+            }
+        }
+        if (currentUser != null && currentUser.bot) {
+            String idStr = String.valueOf(currentUser.id);
+            String username = currentUser.username;
+            boolean allowed = AskanFilter.getInstance().isChannelAllowed(idStr)
+                    || (username != null && AskanFilter.getInstance().isChannelAllowed(username));
+            if (!allowed) {
+                final TLRPC.User blockedUser = currentUser;
+                AndroidUtilities.runOnUIThread(() -> showBlockedDialog(null, blockedUser));
+                return false;
+            }
+        }
+
         dialog_id_Long = dialog_id;
 
         transitionAnimationGlobalIndex = NotificationCenter.getGlobalInstance().setAnimationInProgress(transitionAnimationGlobalIndex, new int[0]);
@@ -3265,6 +3305,28 @@ public class ChatActivity extends BaseFragment implements
         if (selectionReactionsOverlay != null && selectionReactionsOverlay.isVisible()) {
             selectionReactionsOverlay.setHiddenByScroll(true);
         }
+    }
+
+    // Askan requirement #2: shown when user tries to open a blocked channel or bot.
+    // Requirement #8 (request system): replace the stub Toast with a real POST /api/requests call.
+    private void showBlockedDialog(TLRPC.Chat chat, TLRPC.User user) {
+        Context ctx = getParentActivity();
+        if (ctx == null) return;
+
+        String name = chat != null ? chat.title
+                : (user != null && user.first_name != null ? user.first_name : "");
+        boolean isBot = user != null && user.bot;
+        String subject = isBot ? "בוט" : "ערוץ";
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
+        builder.setTitle(subject + " חסום");
+        builder.setMessage(subject + " זה אינו מאושר לשימוש באפליקציה.\nניתן לשלוח בקשת גישה למנהל.");
+        builder.setPositiveButton("בקש גישה", (dialog, which) -> {
+            // TODO requirement #8: send POST /api/requests with chat/user details
+            Toast.makeText(ctx, "בקשה תתווסף בקרוב", Toast.LENGTH_SHORT).show();
+        });
+        builder.setNegativeButton("סגור", null);
+        builder.show();
     }
 
     @Override

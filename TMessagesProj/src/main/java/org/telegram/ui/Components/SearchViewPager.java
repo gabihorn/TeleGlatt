@@ -1492,12 +1492,13 @@ public class SearchViewPager extends ViewPagerFixed implements FilteredSearchVie
         public void updateItems() {
             items.clear();
             items.add(new Item(DIALOGS_TYPE));
-            if (expandedPublicPosts) {
-                items.add(new Item(PUBLIC_POSTS_TYPE));
-            }
-            items.add(new Item(CHANNELS_TYPE));
-            items.add(new Item(BOTS_TYPE));
-            items.add(new Item(POSTS_TYPE));
+            // Askan requirement #4: hide global search tabs (Channels, Bots, Posts, PublicPosts)
+            // if (expandedPublicPosts) {
+            //     items.add(new Item(PUBLIC_POSTS_TYPE));
+            // }
+            // items.add(new Item(CHANNELS_TYPE));
+            // items.add(new Item(BOTS_TYPE));
+            // items.add(new Item(POSTS_TYPE));
             if (!showOnlyDialogsAdapter) {
                 Item item = new Item(FILTER_TYPE);
                 item.filterIndex = 0;
