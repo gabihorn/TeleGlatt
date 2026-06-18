@@ -43562,37 +43562,14 @@ public class ChatActivity extends BaseFragment implements
         final boolean isHashtag = str.startsWith("#") || str.startsWith("$");
         final boolean isMail = str.startsWith("mailto:");
 
-        if (!isMail) {
-            options.add(R.drawable.msg_openin, getString(customTabs && !isHashtag ? R.string.OpenInTelegramBrowser : R.string.Open), () -> {
+        // Askan: always open links in external browser — no in-app browser, no Instant View.
+        if (!isMail && !isHashtag) {
+            options.add(R.drawable.msg_openin, getString(R.string.Open), () -> {
                 if (str.startsWith("video?")) {
                     didPressMessageUrl(span, false, messageObject, cell);
-                } else if (customTabs && !isHashtag) {
-                    Browser.openInTelegramBrowser(getParentActivity(), str, null);
                 } else {
                     logSponsoredClicked(messageObject, false, false);
                     openClickableLink(span, str, false, cell, messageObject, false);
-                }
-            });
-        }
-
-        if (customTabs && !isHashtag || isMail) {
-            options.add(R.drawable.msg_language, getString(R.string.OpenInSystemBrowser), () -> {
-                Browser.openInExternalBrowser(getParentActivity(), str, false);
-            });
-        } else if (!isMail && !isHashtag && !customTabs && allowCustomTabs && !SharedConfig.inappBrowser) {
-            options.add(R.drawable.msg_language, getString(R.string.OpenInTelegramBrowser), () -> {
-                Browser.openInTelegramBrowser(getParentActivity(), str, null);
-            });
-        }
-
-        TLRPC.MessageMedia media = MessageObject.getMedia(messageObject);
-        if (media instanceof TLRPC.TL_messageMediaWebPage && media.webpage != null && media.webpage.cached_page != null && TextUtils.equals(media.webpage.url, str)) {
-            options.add(R.drawable.menu_instant_view, getString(R.string.OpenInstantView), () -> {
-                if (messageObject.messageOwner.media != null && messageObject.messageOwner.media.webpage != null && messageObject.messageOwner.media.webpage.cached_page != null) {
-                    if (LaunchActivity.instance != null && LaunchActivity.instance.getBottomSheetTabs() != null && LaunchActivity.instance.getBottomSheetTabs().tryReopenTab(messageObject) != null) {
-                        return;
-                    }
-                    ChatActivity.this.createArticleViewer(false).open(messageObject);
                 }
             });
         }
