@@ -2767,9 +2767,9 @@ public class ChatActivity extends BaseFragment implements
             return false;
         }
 
-        // Askan requirements #1 + #2: block oversized megagroups, unauthorized channels, and bots.
-        // Discussion groups (megagroups linked to an approved channel) are exempt from the size limit.
-        if (currentChat != null) {
+        // Askan requirements #1 + #2: block unauthorized megagroups, channels, and bots.
+        // isComments is true when opened via the comments button — exempt from blocking.
+        if (currentChat != null && !isComments) {
             TLRPC.ChatFull chatFull = getMessagesController().getChatFull(currentChat.id);
             if (AskanFilter.getInstance().isChatBlocked(currentChat, chatFull)) {
                 final TLRPC.Chat blockedChat = currentChat;

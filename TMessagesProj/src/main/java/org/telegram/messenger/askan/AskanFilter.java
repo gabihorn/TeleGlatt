@@ -287,25 +287,21 @@ public class AskanFilter {
 
     /**
      * Returns true if the chat should be blocked.
-     * chatFull may be null — in that case the discussion-group exemption is skipped (fail-open).
+     * All megagroups are blocked unless they are a discussion group of an approved channel.
+     * If chatFull is null we cannot verify the exemption → fail-closed (block).
      */
     public synchronized boolean isChatBlocked(TLRPC.Chat chat, TLRPC.ChatFull chatFull) {
         if (chat == null) return false;
 
-        // Rule #1: oversized megagroup
+        // Rule #1: all megagroups blocked; exempt only discussion groups of approved channels
         if (ChatObject.isMegagroup(chat)) {
-            int count = chat.participants_count;
-            if (count > 0 && count > maxMegagroupSize) {
-                // Exempt discussion groups whose linked channel is approved
-                if (chatFull != null && chatFull.linked_chat_id != 0) {
-                    String linkedId = String.valueOf(chatFull.linked_chat_id);
-                    if (globalAllow.contains(linkedId) || userAllow.contains(linkedId)) {
-                        return false;
-                    }
+            if (chatFull != null && chatFull.linked_chat_id != 0) {
+                String linkedId = String.valueOf(chatFull.linked_chat_id);
+                if (globalAllow.contains(linkedId) || userAllow.contains(linkedId)) {
+                    return false; // discussion group of an approved channel
                 }
-                return true;
             }
-            return false;
+            return true; // chatFull null, no linked channel, or linked channel not approved
         }
 
         // Rule #2: unauthorized channel
