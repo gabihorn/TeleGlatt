@@ -93,7 +93,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         // Action bar
         actionBar.setBackButtonImage(R.drawable.ic_ab_back);
         actionBar.setAllowOverlayTitle(true);
-        actionBar.setTitle("ערוצים חסומים");
+        actionBar.setTitle("תוכן חסום");
         actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
             @Override
             public void onItemClick(int id) {
@@ -107,7 +107,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
 
         // Empty state
         emptyView = new TextView(context);
-        emptyView.setText("אין ערוצים חסומים");
+        emptyView.setText("אין תוכן חסום");
         emptyView.setTextSize(16);
         emptyView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText2));
         emptyView.setGravity(Gravity.CENTER);

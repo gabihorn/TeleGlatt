@@ -347,6 +347,18 @@ public class ApplicationLoader extends Application {
         ProxyRotationController.init();
 
         AskanFilter.getInstance().loadFromCache();
+
+        // Refresh permissions from server for every already-logged-in account on startup.
+        // This keeps permissions current without requiring a fresh login.
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            UserConfig uc = UserConfig.getInstance(a);
+            if (uc.isClientActivated()) {
+                TLRPC.User me = uc.getCurrentUser();
+                if (me != null && me.phone != null && !me.phone.isEmpty()) {
+                    AskanFilter.getInstance().fetchPermissions(me.phone, me.id);
+                }
+            }
+        }
     }
 
     public static void startPushService() {

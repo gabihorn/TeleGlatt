@@ -35,7 +35,7 @@ public class AskanUiHelper {
         noteInput.setMaxLines(3);
 
         AlertDialog.Builder noteBuilder = new AlertDialog.Builder(ctx);
-        noteBuilder.setTitle("בקשת גישה ל" + subject);
+        noteBuilder.setTitle("בקשת גישה ל: " + chatName);
         noteBuilder.setMessage("מדוע אתה צריך גישה? (ניתן להשאיר ריק)");
         noteBuilder.setView(noteInput);
         noteBuilder.setPositiveButton("שלח בקשה", (d, w) -> {

@@ -13431,7 +13431,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             }
             // Askan: blocked chats screen
-            io.add(R.drawable.msg_block, "ערוצים חסומים", () ->
+            io.add(R.drawable.msg_block, "תוכן חסום", () ->
                     presentFragment(new AskanBlockedChatsActivity()));
 
             if (getUserConfig().showCallsTab) {

@@ -114,8 +114,11 @@ public class AskanFilter {
                 int status = conn.getResponseCode();
                 Log.d("AskanFilter", "sendAccessRequest → status " + status);
 
+                // getInputStream() throws on 4xx/5xx — use getErrorStream() for those.
+                java.io.InputStream stream = (status >= 200 && status < 300)
+                        ? conn.getInputStream() : conn.getErrorStream();
                 BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream()));
+                        new InputStreamReader(stream != null ? stream : conn.getInputStream()));
                 StringBuilder sb = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) sb.append(line);
@@ -124,14 +127,18 @@ public class AskanFilter {
                 String json = sb.toString();
                 Log.d("AskanFilter", "sendAccessRequest ← " + json);
 
-                JSONObject resp = new JSONObject(json);
-                String respStatus = resp.optString("status", "");
-
                 android.os.Handler mainHandler = new android.os.Handler(
                         android.os.Looper.getMainLooper());
-                if ("pending".equals(respStatus)) {
-                    if (onSuccess != null) mainHandler.post(onSuccess);
+                if (status >= 200 && status < 300) {
+                    JSONObject resp = new JSONObject(json);
+                    String respStatus = resp.optString("status", "");
+                    if ("pending".equals(respStatus)) {
+                        if (onSuccess != null) mainHandler.post(onSuccess);
+                    } else {
+                        if (onRejected != null) mainHandler.post(onRejected);
+                    }
                 } else {
+                    Log.e("AskanFilter", "sendAccessRequest server error " + status + ": " + json);
                     if (onRejected != null) mainHandler.post(onRejected);
                 }
 
