@@ -2248,7 +2248,7 @@ public class ChatActivity extends BaseFragment implements
                     chatActivityEnterView.setFieldFocused();
                     waitingForKeyboard = true;
                 }
-                chatActivityEnterView.setAllowStickersAndGifs(true, true, true, waitingForKeyboard);
+                chatActivityEnterView.setAllowStickersAndGifs(true, true, false, waitingForKeyboard);
                 if (editingMessageObjectReqId != 0) {
                     getConnectionsManager().cancelRequest(editingMessageObjectReqId, true);
                     editingMessageObjectReqId = 0;
@@ -7943,7 +7943,7 @@ public class ChatActivity extends BaseFragment implements
         chatActivityEnterView.setBotsCount(botsCount, hasBotsCommands, hasQuickReplies, false);
         chatActivityEnterView.updateBotWebView(false);
         chatActivityEnterView.setMinimumHeight(AndroidUtilities.dp(51));
-        chatActivityEnterView.setAllowStickersAndGifs(true, true, currentEncryptedChat == null || AndroidUtilities.getPeerLayerVersion(currentEncryptedChat.layer) >= 46);
+        chatActivityEnterView.setAllowStickersAndGifs(true, true, false);
         chatActivityEnterView.shouldDrawBackground = false;
         if (textToSet != null) {
             chatActivityEnterView.setFieldText(textToSet);
@@ -13655,13 +13655,7 @@ public class ChatActivity extends BaseFragment implements
                     return;
                 }
             }
-            boolean allowGifs;
-            if (ChatObject.isChannel(currentChat) && currentChat.banned_rights != null && currentChat.banned_rights.send_gifs) {
-                allowGifs = false;
-            } else {
-                allowGifs = true;
-            }
-            PhotoAlbumPickerActivity fragment = new PhotoAlbumPickerActivity(PhotoAlbumPickerActivity.SELECT_TYPE_ALL, allowGifs, true, ChatActivity.this);
+            PhotoAlbumPickerActivity fragment = new PhotoAlbumPickerActivity(PhotoAlbumPickerActivity.SELECT_TYPE_ALL, false, true, ChatActivity.this);
             if (currentChat != null && !ChatObject.hasAdminRights(currentChat) && currentChat.slowmode_enabled) {
                 fragment.setMaxSelectedPhotos(10, true);
             } else {
@@ -22292,7 +22286,7 @@ public class ChatActivity extends BaseFragment implements
                     suggestEmojiPanel.fireUpdate();
                 }
                 if (chatActivityEnterView != null) {
-                    chatActivityEnterView.setAllowStickersAndGifs(true, true, true);
+                    chatActivityEnterView.setAllowStickersAndGifs(true, true, false);
                     chatActivityEnterView.checkRoundVideo();
                 }
                 if (mentionContainer != null && mentionContainer.getAdapter() != null) {
