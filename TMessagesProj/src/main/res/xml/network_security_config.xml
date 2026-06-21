@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Cleartext allowed globally for Telegram's internal browser (http:// links) -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+    <!-- Askan API must always use HTTPS — cleartext explicitly blocked -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">askansmart.com</domain>
+    </domain-config>
+</network-security-config>

@@ -12315,15 +12315,17 @@ public class ChatActivityEnterView extends FrameLayout implements
             } else if (messageEditText != null && !TextUtils.isEmpty(messageEditText.getText())) {
                 nextIcon = ChatActivityEnterViewAnimatedIconView.State.SMILE;
             } else {
-                if (currentPage == 1) {
+                // Askan: GIF tab is hidden at position 1; stickers are at position 2.
+                // Page 2 = stickers; page 1 (GIF, hidden) treated as SMILE.
+                if (currentPage == 2) {
                     nextIcon = ChatActivityEnterViewAnimatedIconView.State.STICKER;
                 } else {
-                    nextIcon = ChatActivityEnterViewAnimatedIconView.State.GIF;
+                    nextIcon = ChatActivityEnterViewAnimatedIconView.State.SMILE;
                 }
             }
         }
         if (!sendPlainEnabled && nextIcon == ChatActivityEnterViewAnimatedIconView.State.SMILE) {
-            nextIcon = ChatActivityEnterViewAnimatedIconView.State.GIF;
+            nextIcon = ChatActivityEnterViewAnimatedIconView.State.SMILE; // Askan: GIF tab hidden
         } else if (!stickersEnabled && nextIcon != ChatActivityEnterViewAnimatedIconView.State.SMILE) {
             nextIcon = ChatActivityEnterViewAnimatedIconView.State.SMILE;
         }

@@ -14,6 +14,7 @@ import android.graphics.Paint;
 import android.graphics.Paint.Style;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.RippleDrawable;
+import android.util.SparseIntArray;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -70,6 +71,8 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 
     private final Theme.ResourcesProvider resourcesProvider;
     private int lastScrollX = 0;
+    // Askan: positions that should be hidden (View.GONE) after every tab rebuild
+    private final SparseIntArray hiddenTabVisibilities = new SparseIntArray();
 
     public PagerSlidingTabStrip(Context context, Theme.ResourcesProvider resourcesProvider) {
         super(context);
@@ -103,6 +106,20 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
         this.delegatePageListener = listener;
     }
 
+    public void setTabHidden(int position, boolean hidden) {
+        hiddenTabVisibilities.put(position, hidden ? View.GONE : View.VISIBLE);
+        applyHiddenTabs();
+    }
+
+    private void applyHiddenTabs() {
+        for (int i = 0; i < hiddenTabVisibilities.size(); i++) {
+            int pos = hiddenTabVisibilities.keyAt(i);
+            int vis = hiddenTabVisibilities.valueAt(i);
+            View v = getTab(pos);
+            if (v != null) v.setVisibility(vis);
+        }
+    }
+
     public void notifyDataSetChanged() {
         tabsContainer.removeAllViews();
         tabCount = pager.getAdapter().getCount();
@@ -119,6 +136,7 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
             }
         }
         updateTabStyles();
+        applyHiddenTabs();
         getViewTreeObserver().addOnGlobalLayoutListener(new OnGlobalLayoutListener() {
             @Override
             public void onGlobalLayout() {
@@ -348,7 +366,9 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 
     public void onSizeChanged(int paramInt1, int paramInt2, int paramInt3, int paramInt4) {
         if (!shouldExpand) {
-            post(PagerSlidingTabStrip.this::notifyDataSetChanged);
+            post(() -> {
+                notifyDataSetChanged(); // already calls applyHiddenTabs internally
+            });
         }
     }
 

@@ -225,6 +225,8 @@ import org.telegram.ui.TON.TONIntroActivity;
 import org.telegram.ui.bots.BotWebViewAttachedSheet;
 import org.telegram.ui.bots.BotWebViewSheet;
 import org.telegram.ui.bots.WebViewRequestProps;
+import org.telegram.messenger.askan.AskanFilter;
+import org.telegram.messenger.askan.AskanUiHelper;
 import org.webrtc.voiceengine.WebRtcAudioTrack;
 
 import java.io.BufferedReader;
@@ -4708,6 +4710,17 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                     ((ChatActivity) lastFragment).openAttachBotLayout(attachMenuBotToOpen);
                                 } else {
                                     TLRPC.Chat chat = MessagesController.getInstance(currentAccount).getChat(-dialog_id);
+                                    // Askan: block unauthorized channel/group at link entry point — before any content loads
+                                    if (chat != null && AskanFilter.getInstance().isChatBlocked(chat, null)) {
+                                        try { dismissLoading.run(); } catch (Exception ignore) {}
+                                        showAskanLinkBlockDialog(chat, null, intentAccount);
+                                        return;
+                                    }
+                                    if (user != null && AskanFilter.getInstance().isUserBlocked(user)) {
+                                        try { dismissLoading.run(); } catch (Exception ignore) {}
+                                        showAskanLinkBlockDialog(null, user, intentAccount);
+                                        return;
+                                    }
                                     if (openProfile || giftCollectionId > 0) {
                                         try {
                                             dismissLoading.run();
@@ -9103,5 +9116,34 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     @Override
     public PipActivityController getPipController() {
         return pipActivityController;
+    }
+
+    // Askan: show block dialog when a channel/user link is blocked at the LaunchActivity level
+    private void showAskanLinkBlockDialog(TLRPC.Chat chat, TLRPC.User user, int account) {
+        String name = chat != null ? chat.title
+                : (user != null && user.first_name != null ? user.first_name : "");
+        boolean isBot = user != null && user.bot;
+        String subject = isBot ? "בוט"
+                : (chat != null && org.telegram.messenger.ChatObject.isChannelAndNotMegaGroup(chat) ? "ערוץ" : "קבוצה");
+
+        final String identifier;
+        if (chat != null) {
+            identifier = (chat.username != null && !chat.username.isEmpty())
+                    ? chat.username : String.valueOf(chat.id);
+        } else if (user != null) {
+            identifier = (user.username != null && !user.username.isEmpty())
+                    ? user.username : String.valueOf(user.id);
+        } else {
+            identifier = "";
+        }
+        final String chatName = name;
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle(subject + " חסום");
+        builder.setMessage(subject + " זה אינו מאושר לשימוש באפליקציה.\nניתן לשלוח בקשת גישה למנהל.");
+        builder.setPositiveButton("בקש גישה", (dialog, which) ->
+                AskanUiHelper.showAccessRequestNoteDialog(this, account, identifier, chatName, subject, null));
+        builder.setNegativeButton("סגור", null);
+        builder.show();
     }
 }

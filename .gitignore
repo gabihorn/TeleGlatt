@@ -3,6 +3,12 @@
 build/
 obj/
 *.iml
+# Signing — NEVER commit keystores or credentials
+*.jks
+*.keystore
+local.properties
+keystore.properties
+TMessagesProj/config/keystore-password.txt
 local.properties
 TMessagesProj/.cxx/
 TMessagesProj/jniLibs/

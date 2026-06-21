@@ -6386,12 +6386,7 @@ public class ChatAttachAlert extends BottomSheet implements NotificationCenter.N
                         ChatActivity chatActivity = (ChatActivity) baseFragment;
 
                         attachBotsStartRow = buttonsCount;
-                        attachMenuBots.clear();
-                        for (TLRPC.TL_attachMenuBot bot : MediaDataController.getInstance(currentAccount).getAttachMenuBots().bots) {
-                            if (bot.show_in_attach_menu && MediaDataController.canShowAttachMenuBot(bot, chatActivity.getCurrentChat() != null ? chatActivity.getCurrentChat() : chatActivity.getCurrentUser())) {
-                                attachMenuBots.add(bot);
-                            }
-                        }
+                        attachMenuBots.clear(); // Askan: Mini Apps disabled — no attach-menu bots
 
                         buttonsCount += attachMenuBots.size();
                         attachBotsEndRow = buttonsCount;

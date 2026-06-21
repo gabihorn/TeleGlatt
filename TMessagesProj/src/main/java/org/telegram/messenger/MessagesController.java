@@ -23615,8 +23615,8 @@ public class MessagesController extends BaseController implements NotificationCe
             }
             contentSettingsLoading = false;
             if (contentSettings != null && ignoreRestrictionReasons != null) {
-                if (contentSettings.sensitive_enabled) ignoreRestrictionReasons.add("sensitive");
-                else ignoreRestrictionReasons.remove("sensitive");
+                // Askan: always block sensitive/18+ content regardless of server setting
+                ignoreRestrictionReasons.remove("sensitive");
                 if (mainPreferences != null) {
                     mainPreferences.edit().putStringSet("ignoreRestrictionReasons", ignoreRestrictionReasons).apply();
                 }

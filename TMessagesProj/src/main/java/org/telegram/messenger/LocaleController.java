@@ -730,6 +730,9 @@ public class LocaleController {
         try {
             SharedPreferences preferences = MessagesController.getGlobalMainSettings();
             String lang = preferences.getString("language", null);
+            if (lang == null) {
+                lang = "iw"; // Askan: default to Hebrew on first launch
+            }
             if (lang != null) {
                 currentInfo = getLanguageFromDict(lang);
                 if (currentInfo != null) {
@@ -3246,6 +3249,15 @@ public class LocaleController {
                     }
                     saveOtherLanguages();
                     NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.suggestedLangpack);
+                    // Askan: auto-apply Hebrew on first launch if no language was saved
+                    SharedPreferences askanPrefs = MessagesController.getGlobalMainSettings();
+                    if (askanPrefs.getString("language", null) == null) {
+                        LocaleInfo hebrewInfo = getLanguageFromDict("iw");
+                        if (hebrewInfo == null) hebrewInfo = getLanguageFromDict("he");
+                        if (hebrewInfo != null) {
+                            applyLanguage(hebrewInfo, true, false, currentAccount);
+                        }
+                    }
                     if (applyCurrent) {
                         applyLanguage(currentLocaleInfo, true, false, currentAccount);
                     }

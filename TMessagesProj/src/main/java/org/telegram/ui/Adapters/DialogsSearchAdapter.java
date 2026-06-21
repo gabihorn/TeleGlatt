@@ -1928,7 +1928,7 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
                         username = membersString;
                     }
                 }
-                cell.allowBotOpenButton(isRecent, this::openBotApp);
+                cell.allowBotOpenButton(false, this::openBotApp); // Askan: Mini Apps disabled
                 cell.setOnSponsoredOptionsClick(this::openSponsoredOptions);
                 cell.setAd(obj instanceof TLRPC.TL_sponsoredPeer ? (TLRPC.TL_sponsoredPeer) obj : null);
                 cell.setData(user != null ? user : chat, encryptedChat, name, username, true, savedMessages);

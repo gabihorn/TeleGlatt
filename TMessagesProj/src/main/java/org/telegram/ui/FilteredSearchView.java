@@ -734,6 +734,16 @@ public class FilteredSearchView extends FrameLayout implements NotificationCente
                     int n = messageObjects.size();
                     for (int i = 0; i < n; i++) {
                         MessageObject messageObject = messageObjects.get(i);
+                        long did = messageObject.getDialogId();
+                        org.telegram.messenger.askan.AskanFilter askanF = org.telegram.messenger.askan.AskanFilter.getInstance();
+                        if (did < 0) {
+                            TLRPC.Chat srcChat = MessagesController.getInstance(currentAccount).getChat(-did);
+                            TLRPC.ChatFull srcFull = MessagesController.getInstance(currentAccount).getChatFull(-did);
+                            if (askanF.isChatBlocked(srcChat, srcFull)) continue;
+                        } else if (did > 0) {
+                            TLRPC.User srcUser = MessagesController.getInstance(currentAccount).getUser(did);
+                            if (askanF.isUserBlocked(srcUser)) continue;
+                        }
                         ArrayList<MessageObject> messageObjectsByDate = sectionArrays.get(messageObject.monthKey);
                         if (messageObjectsByDate == null) {
                             messageObjectsByDate = new ArrayList<>();

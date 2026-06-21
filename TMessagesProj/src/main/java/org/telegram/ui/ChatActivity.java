@@ -1611,6 +1611,7 @@ public class ChatActivity extends BaseFragment implements
     private final static int charge_fee = 72;
 
     private final static int chat_menu_topic_create = 73;
+    private final static int askan_block = 99;
 
     private final static int id_chat_compose_panel = 1000;
 
@@ -3309,7 +3310,9 @@ public class ChatActivity extends BaseFragment implements
     // Requirement #8 (request system): replace the stub Toast with a real POST /api/requests call.
     // Askan requirement #2 + #8: blocked channel/bot dialog with real access-request flow
     private void showBlockedDialog(TLRPC.Chat chat, TLRPC.User user) {
-        Context ctx = getParentActivity();
+        Context parentCtx = getParentActivity();
+        // Fallback for link-open path where fragment is not yet attached to the activity
+        final Context ctx = (parentCtx != null) ? parentCtx : AndroidUtilities.getActivity();
         if (ctx == null) return;
 
         String name = chat != null ? chat.title
@@ -3903,6 +3906,28 @@ public class ChatActivity extends BaseFragment implements
                     }
                 } else if (id == report) {
                     ReportBottomSheet.openChat(ChatActivity.this);
+                } else if (id == askan_block) {
+                    String blockName = currentChat != null ? currentChat.title
+                            : (currentUser != null ? currentUser.first_name : "");
+                    String blockUsername = currentChat != null
+                            ? (currentChat.username != null && !currentChat.username.isEmpty()
+                                    ? currentChat.username : String.valueOf(currentChat.id))
+                            : String.valueOf(currentUser.id);
+                    String blockSubject = currentUser != null ? "בוט"
+                            : ChatObject.isMegagroup(currentChat) ? "קבוצה" : "ערוץ";
+                    new AlertDialog.Builder(getParentActivity())
+                            .setTitle("חסימת " + blockSubject)
+                            .setMessage("לחסום את \"" + blockName + "\"?\nלא תוכל לראות אותו יותר.\nניתן לבטל רק דרך מנהל המערכת.")
+                            .setPositiveButton("חסום", (d, w) -> {
+                                TLRPC.User me = getUserConfig().getCurrentUser();
+                                if (me != null && me.phone != null) {
+                                    org.telegram.messenger.askan.AskanFilter.getInstance()
+                                            .sendBlock(me.phone, me.id, blockUsername);
+                                    finishFragment();
+                                }
+                            })
+                            .setNegativeButton(LocaleController.getString(R.string.Cancel), null)
+                            .show();
                 } else if (id == star) {
                     for (int a = 0; a < 2; a++) {
                         for (int b = 0; b < selectedMessagesCanStarIds[a].size(); b++) {
@@ -4384,6 +4409,13 @@ public class ChatActivity extends BaseFragment implements
             updateTranslateItemVisibility();
             if (currentChat != null && !currentChat.creator && !ChatObject.hasAdminRights(currentChat)) {
                 headerItem.lazilyAddSubItem(report, R.drawable.msg_report, LocaleController.getString(R.string.ReportChat));
+            }
+            // Askan: block-back — only for channels/megagroups/bots, not for comments threads
+            if (!isComments && (currentChat != null || (currentUser != null && currentUser.bot))) {
+                String askanBlockLabel = currentUser != null ? "חסום בוט זה"
+                        : ChatObject.isMegagroup(currentChat) ? "חסום קבוצה זו" : "חסום ערוץ זה";
+                headerItem.lazilyAddSubItem(askan_block, R.drawable.msg_block, askanBlockLabel)
+                        .setColors(getThemedColor(Theme.key_text_RedRegular), getThemedColor(Theme.key_text_RedRegular));
             }
             if (currentUser != null && currentUser.id != UserObject.VERIFY && currentUser.id != UserObject.REPLY_BOT) {
                 addContactItem = headerItem.lazilyAddSubItem(share_contact, R.drawable.msg_addcontact, LocaleController.getString(R.string.AddToContacts));

@@ -391,10 +391,18 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         bottomPages = new BottomPagesView(context, viewPager, 6);
         frameContainerView.addView(bottomPages, LayoutHelper.createFrame(66, 5, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, ICON_HEIGHT_DP + 200, 0, 0));
 
+        // Askan: Telegram API disclosure — required by Telegram ToS
+        TextView telegramDisclaimerView = new TextView(context);
+        telegramDisclaimerView.setGravity(Gravity.CENTER);
+        telegramDisclaimerView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+        telegramDisclaimerView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+        telegramDisclaimerView.setText("אפליקציה זו מבוססת על Telegram API\nומהווה חלק מהמערכת האקולוגית של Telegram.");
+        frameContainerView.addView(telegramDisclaimerView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 16, 0, 16, 4));
+
         switchLanguageTextView = new TextView(context);
         switchLanguageTextView.setGravity(Gravity.CENTER);
         switchLanguageTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-        frameContainerView.addView(switchLanguageTextView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 30, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 20));
+        frameContainerView.addView(switchLanguageTextView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 30, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 38));
         switchLanguageTextView.setOnClickListener(v -> {
             if (startPressed || localeInfo == null) {
                 return;

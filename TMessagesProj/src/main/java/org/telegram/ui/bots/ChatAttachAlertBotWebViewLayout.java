@@ -486,6 +486,7 @@ public class ChatAttachAlertBotWebViewLayout extends ChatAttachAlert.AttachAlert
     }
 
     public void requestWebView(int currentAccount, long peerId, long botId, boolean silent, int replyToMsgId, String startCommand, long monoforumTopicId) {
+        if (true) return; // Askan: Mini Apps disabled
         this.currentAccount = currentAccount;
         this.peerId = peerId;
         this.botId = botId;

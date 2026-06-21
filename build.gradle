@@ -1,3 +1,16 @@
+// Load signing credentials once for all modules (keystore.properties is git-ignored)
+def keystorePropsFile = file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+ext {
+    RELEASE_STORE_FILE     = keystoreProps['storeFile']     ?: ''
+    RELEASE_STORE_PASSWORD = keystoreProps['storePassword'] ?: ''
+    RELEASE_KEY_ALIAS      = keystoreProps['keyAlias']      ?: ''
+    RELEASE_KEY_PASSWORD   = keystoreProps['keyPassword']   ?: ''
+}
+
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 buildscript {
     repositories {

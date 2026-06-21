@@ -109,9 +109,11 @@
         android:allowAudioPlaybackCapture="true"
         tools:replace="android:supportsRtl"
         android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:enableOnBackInvokedCallback="true"
     >
-        <!-- usesCleartextTraffic for browser supporting opening http:// links -->
+        <!-- usesCleartextTraffic for browser supporting opening http:// links;
+             network_security_config.xml overrides cleartext to be blocked for askansmart.com -->
 
         <activity-alias
             android:enabled="true"

@@ -293,9 +293,13 @@ public class EmojiView extends FrameLayout implements
         for (int i = 0; i < allTabs.size(); i++) {
             if (allTabs.get(i).type == TAB_EMOJI && allowEmoji) {
                 currentTabs.add(allTabs.get(i));
-            } if (allTabs.get(i).type == TAB_GIFS && allowGifs) {
+            }
+            // Askan: always keep GIF tab in structure (position 1) so stickers stay at position 2.
+            // The tab button is hidden via View.GONE; content is empty when allowGifs=false.
+            if (allTabs.get(i).type == TAB_GIFS) {
                 currentTabs.add(allTabs.get(i));
-            }  if (allTabs.get(i).type == TAB_STICKERS && allowStickers) {
+            }
+            if (allTabs.get(i).type == TAB_STICKERS && allowStickers) {
                 currentTabs.add(allTabs.get(i));
             }
         }
@@ -306,6 +310,7 @@ public class EmojiView extends FrameLayout implements
             pager.setAdapter(null);
             pager.setAdapter(emojiPagerAdapter);
             if (typeTabs != null) {
+                typeTabs.setTabHidden(1, true); // Askan: GIF tab (position 1) always hidden
                 typeTabs.setViewPager(pager);
             }
         }
@@ -2601,6 +2606,7 @@ public class EmojiView extends FrameLayout implements
 
             @Override
             public void setCurrentItem(int item, boolean smoothScroll) {
+                if (item == 1) item = 2; // Askan: GIF tab hidden — redirect to stickers
                 startStopVisibleGifs(item == 1);
                 if (item == getCurrentItem()) {
                     if (item == 0) {
@@ -2762,7 +2768,10 @@ public class EmojiView extends FrameLayout implements
 
                 @Override
                 public void onPageScrollStateChanged(int state) {
-
+                    // Askan: GIF tab (position 1) is hidden — catch swipe that lands there
+                    if (state == ViewPager.SCROLL_STATE_IDLE && pager.getCurrentItem() == 1) {
+                        pager.setCurrentItem(2, false);
+                    }
                 }
             });
 
@@ -5441,15 +5450,7 @@ public class EmojiView extends FrameLayout implements
         if (pager == null) {
             return;
         }
-        int newPage;
-        int currentItem = pager.getCurrentItem();
-        if (currentItem == 2) {
-            newPage = 1;
-        } else if (currentItem == 1) {
-            newPage = 2;
-        } else {
-            newPage = 0;
-        }
+        int newPage = pager.getCurrentItem();
         if (currentPage != newPage) {
             currentPage = newPage;
             MessagesController.getGlobalEmojiSettings().edit().putInt("selected_page", newPage).commit();
@@ -8467,13 +8468,16 @@ public class EmojiView extends FrameLayout implements
 
         @Override
         public boolean canScrollToTab(int position) {
-            if ((position == 1 || position == 2) && stickersBanned) {
-                showStickerBanHint(true, false, position == 1);
-                return false;
-            }
-            if (position == 0 && emojiBanned) {
-                showStickerBanHint(true, true, false);
-                return false;
+            if (position >= 0 && position < currentTabs.size()) {
+                int type = currentTabs.get(position).type;
+                if ((type == TAB_GIFS || type == TAB_STICKERS) && stickersBanned) {
+                    showStickerBanHint(true, false, type == TAB_GIFS);
+                    return false;
+                }
+                if (type == TAB_EMOJI && emojiBanned) {
+                    showStickerBanHint(true, true, false);
+                    return false;
+                }
             }
             return true;
         }
@@ -8488,13 +8492,12 @@ public class EmojiView extends FrameLayout implements
         }
 
         public CharSequence getPageTitle(int position) {
-            switch (position) {
-                case 0:
-                    return getString(R.string.Emoji);
-                case 1:
-                    return getString(R.string.AccDescrGIFs);
-                case 2:
-                    return getString(R.string.AccDescrStickers);
+            if (position >= 0 && position < currentTabs.size()) {
+                switch (currentTabs.get(position).type) {
+                    case TAB_EMOJI:    return getString(R.string.Emoji);
+                    case TAB_GIFS:     return getString(R.string.AccDescrGIFs);
+                    case TAB_STICKERS: return getString(R.string.AccDescrStickers);
+                }
             }
             return null;
         }

@@ -1914,6 +1914,9 @@ public class BotWebViewSheet extends Dialog implements NotificationCenter.Notifi
 
     @Override
     public void show() {
+        return; // Askan: Mini Apps disabled
+    }
+    private void showInternal() {
         if (!AndroidUtilities.isSafeToShow(getContext())) return;
         setOpen(true);
         windowView.setAlpha(0f);
