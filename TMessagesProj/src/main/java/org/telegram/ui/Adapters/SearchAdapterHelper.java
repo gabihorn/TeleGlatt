@@ -252,9 +252,9 @@ public class SearchAdapterHelper {
                                         chat = chatsMap.get(peer.channel_id);
                                     }
                                     if (chat != null) {
-                                        // Askan requirement #9: content filter — hide chat with blocked keyword in name
-                                        if (org.telegram.messenger.askan.AskanFilter.getInstance().isContentFilterEnabled()
-                                                && org.telegram.messenger.askan.AskanFilter.getInstance().containsBlockedWord(chat.title)) {
+                                        // Askan requirement #9: content filter — approved chats are exempt from word filter
+                                        if (org.telegram.messenger.askan.AskanFilter.getInstance().containsBlockedWordForChat(
+                                                chat.title, String.valueOf(-chat.id), chat.username)) {
                                             continue;
                                         }
                                         if (!allowChats || canAddGroupsOnly && !ChatObject.canAddBotsToChat(chat) || -chat.id == exceptDialogId || !filter(chat)) {

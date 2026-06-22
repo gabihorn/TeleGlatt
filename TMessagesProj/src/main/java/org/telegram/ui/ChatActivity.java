@@ -2784,23 +2784,30 @@ public class ChatActivity extends BaseFragment implements
             return false;
         }
 
-        // Askan requirement #9: content filter — block channel/bot whose name contains a blocked word
-        // Guard: isContentFilterEnabled() returns false immediately when filter is off (zero cost)
+        // Askan requirement #9: content filter — block channel/bot whose name contains a blocked word.
+        // isExplicitlyAllowed checks both numeric ID and username — server stores allows by username.
         if (AskanFilter.getInstance().isContentFilterEnabled()) {
-            String nameToCheck = currentChat != null ? currentChat.title
-                    : (currentUser != null
-                        ? (currentUser.first_name != null ? currentUser.first_name : "")
-                            + " " + (currentUser.last_name != null ? currentUser.last_name : "")
-                        : "");
-            if (AskanFilter.getInstance().containsBlockedWord(nameToCheck.trim())) {
-                if (currentChat != null) {
-                    final TLRPC.Chat c = currentChat;
-                    AndroidUtilities.runOnUIThread(() -> showBlockedDialog(c, null));
-                } else if (currentUser != null) {
-                    final TLRPC.User u = currentUser;
-                    AndroidUtilities.runOnUIThread(() -> showBlockedDialog(null, u));
+            String idStr = currentChat != null ? String.valueOf(currentChat.id)
+                    : (currentUser != null ? String.valueOf(currentUser.id) : "");
+            String chatUsername = currentChat != null ? currentChat.username
+                    : (currentUser != null ? currentUser.username : null);
+            boolean explicitlyAllowed = AskanFilter.getInstance().isExplicitlyAllowed(idStr, chatUsername);
+            if (!explicitlyAllowed) {
+                String nameToCheck = currentChat != null ? currentChat.title
+                        : (currentUser != null
+                            ? (currentUser.first_name != null ? currentUser.first_name : "")
+                                + " " + (currentUser.last_name != null ? currentUser.last_name : "")
+                            : "");
+                if (AskanFilter.getInstance().containsBlockedWord(nameToCheck.trim())) {
+                    if (currentChat != null) {
+                        final TLRPC.Chat c = currentChat;
+                        AndroidUtilities.runOnUIThread(() -> showBlockedDialog(c, null));
+                    } else if (currentUser != null) {
+                        final TLRPC.User u = currentUser;
+                        AndroidUtilities.runOnUIThread(() -> showBlockedDialog(null, u));
+                    }
+                    return false;
                 }
-                return false;
             }
         }
 

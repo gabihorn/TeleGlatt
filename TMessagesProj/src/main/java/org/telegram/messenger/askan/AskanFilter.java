@@ -1,7 +1,12 @@
 package org.telegram.messenger.askan;
 
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -41,6 +46,10 @@ public class AskanFilter {
     private final Set<String> blockedWords = new HashSet<>();
     private final Set<String> blockedChats = new HashSet<>();
 
+    // Device token — persisted across sessions. Issued via POST /api/auth/device.
+    // Stored in SharedPreferences key "device_token".
+    private volatile String deviceToken = null;
+
     private AskanFilter() {}
 
     public static AskanFilter getInstance() {
@@ -54,40 +63,177 @@ public class AskanFilter {
         return instance;
     }
 
+    // ─── HTTP result container (avoids shared mutable fields) ─────────────────
+
+    private static class HttpResult {
+        final int code;
+        final String body;
+        HttpResult(int code, String body) { this.code = code; this.body = body != null ? body : ""; }
+    }
+
+    // ─── Token management ─────────────────────────────────────────────────────
+
+    /**
+     * Returns the stored token if present, or issues a new one via POST /api/auth/device.
+     * Blocks — call only from background threads.
+     */
+    private String acquireToken(String phone, long telegramId) {
+        String existing = deviceToken;
+        if (existing != null) return existing;
+        return issueNewToken(phone, telegramId);
+    }
+
+    /** Clears the cached token (call on 401 to force re-issuance). */
+    private void clearToken() {
+        deviceToken = null;
+        try {
+            ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().remove("device_token").apply();
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Issues a new device token via POST /api/auth/device.
+     * Blocks — call only from background threads.
+     */
+    private String issueNewToken(String phone, long telegramId) {
+        try {
+            JSONObject body = new JSONObject();
+            body.put("phone", phone);
+            body.put("telegram_id", telegramId);
+            HttpResult result = postJson(SERVER_URL + "/api/auth/device", body, null);
+
+            if (result.code != 200) {
+                FileLog.e("AskanFilter: issueNewToken returned " + result.code);
+                return null;
+            }
+            String tok = new JSONObject(result.body).optString("device_token", null);
+            if (tok == null || tok.isEmpty()) {
+                FileLog.e("AskanFilter: issueNewToken — empty token in response");
+                return null;
+            }
+            deviceToken = tok;
+            ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putString("device_token", tok).apply();
+            Log.d("AskanFilter", "device_token acquired");
+            return tok;
+        } catch (Exception e) {
+            FileLog.e("AskanFilter: issueNewToken failed", e);
+            return null;
+        }
+    }
+
+    /**
+     * Finds telegram_id for a phone across all active UserConfig accounts.
+     * Used for token re-issuance in methods that don't receive telegramId explicitly.
+     */
+    private long getCachedTelegramId(String phone) {
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            if (UserConfig.getInstance(a).isClientActivated()) {
+                TLRPC.User user = UserConfig.getInstance(a).getCurrentUser();
+                if (user != null && phone != null && phone.equals(user.phone)) {
+                    return user.id;
+                }
+            }
+        }
+        return -1;
+    }
+
+    // ─── HTTP helpers ─────────────────────────────────────────────────────────
+
+    /** POSTs JSON; token may be null for public endpoints. */
+    private HttpResult postJson(String urlStr, JSONObject body, String token) {
+        try {
+            URL url = new URL(urlStr);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            if (token != null) conn.setRequestProperty("X-Device-Token", token);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            conn.setDoOutput(true);
+            conn.getOutputStream().write(body.toString().getBytes("UTF-8"));
+
+            int code = conn.getResponseCode();
+            java.io.InputStream stream = (code >= 200 && code < 300)
+                    ? conn.getInputStream() : conn.getErrorStream();
+            String responseBody = "";
+            if (stream != null) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+                responseBody = sb.toString();
+            }
+            return new HttpResult(code, responseBody);
+        } catch (Exception e) {
+            FileLog.e("AskanFilter: postJson failed to " + urlStr, e);
+            return new HttpResult(-1, "");
+        }
+    }
+
+    /** GETs a URL with the device token. */
+    private HttpResult getWithToken(String urlStr, String token) {
+        try {
+            URL url = new URL(urlStr);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            if (token != null) conn.setRequestProperty("X-Device-Token", token);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+
+            int code = conn.getResponseCode();
+            if (code != 200) return new HttpResult(code, "");
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+            reader.close();
+            return new HttpResult(code, sb.toString());
+        } catch (Exception e) {
+            FileLog.e("AskanFilter: getWithToken failed: " + urlStr, e);
+            return new HttpResult(-1, "");
+        }
+    }
+
     // ─── Fetch from server ────────────────────────────────────────────────────
 
     public void fetchPermissions(String phone, long telegramId) {
         new Thread(() -> {
             try {
-                String urlStr = SERVER_URL + "/api/permissions/" + phone + "?telegram_id=" + telegramId;
-                Log.d("AskanFilter", "fetchPermissions → GET " + urlStr);
-
-                URL url = new URL(urlStr);
+                // Step 1: GET /api/permissions — public endpoint, no auth needed
+                URL url = new URL(SERVER_URL + "/api/permissions/" + phone + "?telegram_id=" + telegramId);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(8000);
 
                 int status = conn.getResponseCode();
-                Log.d("AskanFilter", "response code: " + status);
-
                 if (status != 200) {
-                    FileLog.e("AskanFilter: server returned " + status + " for phone " + phone);
+                    FileLog.e("AskanFilter: permissions returned " + status);
                     return;
                 }
-
                 BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
                 StringBuilder sb = new StringBuilder();
                 String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line);
-                }
+                while ((line = reader.readLine()) != null) sb.append(line);
                 reader.close();
+                parseAndSave(sb.toString());
 
-                String json = sb.toString();
-                Log.d("AskanFilter", "response JSON: " + json);
+                // Step 2: Ensure device token before authenticated calls
+                String tok = acquireToken(phone, telegramId);
+                if (tok == null) {
+                    FileLog.e("AskanFilter: token unavailable — skipping authenticated piggyback calls");
+                    return;
+                }
 
-                parseAndSave(json);
+                // Step 3: Authenticated calls (only after token confirmed)
+                checkRequestStatusChanges(phone, telegramId);
+                reportVpnApps(phone, telegramId);
 
             } catch (Exception e) {
                 FileLog.e("AskanFilter: fetchPermissions failed", e);
@@ -97,64 +243,65 @@ public class AskanFilter {
 
     // ─── Send access request ─────────────────────────────────────────────────
 
+    public interface AccessRequestCallback {
+        void onResult(String status);
+    }
+
     public void sendAccessRequest(String phone, String chatUsername,
                                    String chatName, String note,
                                    Runnable onSuccess, Runnable onRejected) {
+        sendAccessRequest(phone, chatUsername, chatName, note, status -> {
+            if ("pending".equals(status) || "already_pending".equals(status)) {
+                if (onSuccess != null) onSuccess.run();
+            } else {
+                if (onRejected != null) onRejected.run();
+            }
+        });
+    }
+
+    public void sendAccessRequest(String phone, String chatUsername,
+                                   String chatName, String note,
+                                   AccessRequestCallback callback) {
         new Thread(() -> {
             try {
-                URL url = new URL(SERVER_URL + "/api/requests");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setDoOutput(true);
+                long telegramId = getCachedTelegramId(phone);
+                String token = acquireToken(phone, telegramId);
+                if (token == null) {
+                    FileLog.e("AskanFilter: sendAccessRequest — no token");
+                    AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult("error"); });
+                    return;
+                }
 
                 JSONObject body = new JSONObject();
-                body.put("phone", phone);
                 body.put("chat_username", chatUsername);
                 body.put("chat_name", chatName != null ? chatName : "");
                 body.put("note", note != null ? note : "");
 
-                byte[] bodyBytes = body.toString().getBytes("UTF-8");
-                conn.getOutputStream().write(bodyBytes);
-
-                int status = conn.getResponseCode();
-                Log.d("AskanFilter", "sendAccessRequest → status " + status);
-
-                // getInputStream() throws on 4xx/5xx — use getErrorStream() for those.
-                java.io.InputStream stream = (status >= 200 && status < 300)
-                        ? conn.getInputStream() : conn.getErrorStream();
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(stream != null ? stream : conn.getInputStream()));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
-                reader.close();
-
-                String json = sb.toString();
-                Log.d("AskanFilter", "sendAccessRequest ← " + json);
-
-                android.os.Handler mainHandler = new android.os.Handler(
-                        android.os.Looper.getMainLooper());
-                if (status >= 200 && status < 300) {
-                    JSONObject resp = new JSONObject(json);
-                    String respStatus = resp.optString("status", "");
-                    if ("pending".equals(respStatus)) {
-                        if (onSuccess != null) mainHandler.post(onSuccess);
-                    } else {
-                        if (onRejected != null) mainHandler.post(onRejected);
-                    }
-                } else {
-                    Log.e("AskanFilter", "sendAccessRequest server error " + status + ": " + json);
-                    if (onRejected != null) mainHandler.post(onRejected);
+                HttpResult r = postJson(SERVER_URL + "/api/requests", body, token);
+                if (r.code == 401) {
+                    clearToken();
+                    token = issueNewToken(phone, telegramId);
+                    r = (token != null)
+                            ? postJson(SERVER_URL + "/api/requests", body, token)
+                            : new HttpResult(401, "");
                 }
 
+                final HttpResult result = r;
+                AndroidUtilities.runOnUIThread(() -> {
+                    try {
+                        if (result.code >= 200 && result.code < 300) {
+                            String s = new JSONObject(result.body).optString("status", "error");
+                            if (callback != null) callback.onResult(s);
+                        } else {
+                            if (callback != null) callback.onResult("error");
+                        }
+                    } catch (Exception e) {
+                        if (callback != null) callback.onResult("error");
+                    }
+                });
             } catch (Exception e) {
                 FileLog.e("AskanFilter: sendAccessRequest failed", e);
-                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                    if (onRejected != null) onRejected.run();
-                });
+                AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult("error"); });
             }
         }).start();
     }
@@ -170,18 +317,16 @@ public class AskanFilter {
             int megagroupSize = root.optInt("max_megagroup_size", 250);
             boolean filterEnabled = root.optBoolean("content_filter_enabled", false);
 
-            // Server returns merged list as "allowed_chats"
             Set<String> newGlobal = new HashSet<>();
             JSONArray allowedArr = root.optJSONArray("allowed_chats");
             if (allowedArr != null) {
                 for (int i = 0; i < allowedArr.length(); i++) {
-                    JSONObject item = allowedArr.getJSONObject(i);
-                    String chatId = item.optString("chat_id", "");
+                    String chatId = allowedArr.getJSONObject(i).optString("chat_id", "");
                     if (!chatId.isEmpty()) newGlobal.add(chatId);
                 }
             }
 
-            Set<String> newUser = new HashSet<>(); // reserved for future per-user lists
+            Set<String> newUser = new HashSet<>();
 
             Set<String> newBlocked = new HashSet<>();
             JSONArray wordsArr = root.optJSONArray("blocked_words");
@@ -195,46 +340,38 @@ public class AskanFilter {
             JSONArray blockedArr = root.optJSONArray("blocked_chats");
             if (blockedArr != null) {
                 for (int i = 0; i < blockedArr.length(); i++) {
-                    // server returns plain string array: ["uh1221", ...]
                     String chatId = blockedArr.optString(i, "");
                     if (!chatId.isEmpty()) newBlockedChats.add(chatId);
                 }
             }
 
-            // Apply in-memory
             synchronized (this) {
                 showProfilePhotos = photosFlag;
                 showStories = storiesFlag;
                 maxMegagroupSize = megagroupSize;
                 contentFilterEnabled = filterEnabled;
-                globalAllow.clear();
-                globalAllow.addAll(newGlobal);
-                userAllow.clear();
-                userAllow.addAll(newUser);
-                blockedWords.clear();
-                blockedWords.addAll(newBlocked);
-                blockedChats.clear();
-                blockedChats.addAll(newBlockedChats);
+                globalAllow.clear(); globalAllow.addAll(newGlobal);
+                userAllow.clear();   userAllow.addAll(newUser);
+                blockedWords.clear(); blockedWords.addAll(newBlocked);
+                blockedChats.clear(); blockedChats.addAll(newBlockedChats);
             }
 
-            // Persist to SharedPreferences
-            SharedPreferences prefs = ApplicationLoader.applicationContext
-                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            SharedPreferences.Editor editor = prefs.edit();
-            editor.putBoolean("show_profile_photos", photosFlag);
-            editor.putBoolean("show_stories", storiesFlag);
-            editor.putInt("max_megagroup_size", megagroupSize);
-            editor.putBoolean("content_filter_enabled", filterEnabled);
-            editor.putStringSet("global_allow", newGlobal);
-            editor.putStringSet("user_allow", newUser);
-            editor.putStringSet("blocked_words", newBlocked);
-            editor.putStringSet("blocked_chats", newBlockedChats);
-            editor.apply();
+            ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("show_profile_photos", photosFlag)
+                    .putBoolean("show_stories", storiesFlag)
+                    .putInt("max_megagroup_size", megagroupSize)
+                    .putBoolean("content_filter_enabled", filterEnabled)
+                    .putStringSet("global_allow", newGlobal)
+                    .putStringSet("user_allow", newUser)
+                    .putStringSet("blocked_words", newBlocked)
+                    .putStringSet("blocked_chats", newBlockedChats)
+                    .apply();
 
             FileLog.d("AskanFilter: permissions loaded — global=" + newGlobal.size()
-                    + " user=" + newUser.size() + " words=" + newBlocked.size());
+                    + " words=" + newBlocked.size());
 
-            // Notify the dialog list to refresh so newly approved chats appear immediately.
             AndroidUtilities.runOnUIThread(() -> {
                 for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
                     if (UserConfig.getInstance(a).isClientActivated()) {
@@ -262,25 +399,24 @@ public class AskanFilter {
                 maxMegagroupSize = prefs.getInt("max_megagroup_size", 250);
                 contentFilterEnabled = prefs.getBoolean("content_filter_enabled", false);
 
-                Set<String> cachedGlobal = prefs.getStringSet("global_allow", null);
-                globalAllow.clear();
-                if (cachedGlobal != null) globalAllow.addAll(cachedGlobal);
+                Set<String> g = prefs.getStringSet("global_allow", null);
+                globalAllow.clear(); if (g != null) globalAllow.addAll(g);
 
-                Set<String> cachedUser = prefs.getStringSet("user_allow", null);
-                userAllow.clear();
-                if (cachedUser != null) userAllow.addAll(cachedUser);
+                Set<String> u = prefs.getStringSet("user_allow", null);
+                userAllow.clear(); if (u != null) userAllow.addAll(u);
 
-                Set<String> cachedWords = prefs.getStringSet("blocked_words", null);
-                blockedWords.clear();
-                if (cachedWords != null) blockedWords.addAll(cachedWords);
+                Set<String> w = prefs.getStringSet("blocked_words", null);
+                blockedWords.clear(); if (w != null) blockedWords.addAll(w);
 
-                Set<String> cachedBlockedChats = prefs.getStringSet("blocked_chats", null);
-                blockedChats.clear();
-                if (cachedBlockedChats != null) blockedChats.addAll(cachedBlockedChats);
+                Set<String> bc = prefs.getStringSet("blocked_chats", null);
+                blockedChats.clear(); if (bc != null) blockedChats.addAll(bc);
             }
 
+            // Restore cached device token — avoids re-issuance on every app start
+            deviceToken = prefs.getString("device_token", null);
+
             FileLog.d("AskanFilter: loaded from cache — global=" + globalAllow.size()
-                    + " user=" + userAllow.size() + " words=" + blockedWords.size());
+                    + " token=" + (deviceToken != null ? "present" : "none"));
 
         } catch (Exception e) {
             FileLog.e("AskanFilter: loadFromCache failed", e);
@@ -294,16 +430,41 @@ public class AskanFilter {
         return globalAllow.contains(chatId) || userAllow.contains(chatId);
     }
 
-    public synchronized boolean shouldShowProfilePhotos() {
-        return showProfilePhotos;
+    /**
+     * Checks the allow-list by both numeric ID and username.
+     * Use this instead of isExplicitlyAllowedById when the username is available,
+     * since the server stores allows by username (not numeric ID).
+     */
+    public synchronized boolean isExplicitlyAllowed(String id, String username) {
+        if (globalAllow.contains(id) || userAllow.contains(id)) return true;
+        return username != null && (globalAllow.contains(username) || userAllow.contains(username));
     }
 
-    public synchronized boolean shouldShowStories() {
-        return showStories;
+    public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
+    public synchronized boolean shouldShowStories() { return showStories; }
+    public synchronized boolean isContentFilterEnabled() { return contentFilterEnabled; }
+    public synchronized boolean isSearchBlocked() { return !blockedWords.isEmpty(); }
+    public synchronized int getMaxMegagroupSize() { return maxMegagroupSize; }
+
+    /**
+     * Returns true if text contains a blocked word AND the chat is not explicitly allowed.
+     * Approved chats (by ID or username) are always exempt from word-based filtering.
+     * Use this for chat-name filtering in search results and open-chat checks.
+     */
+    public synchronized boolean containsBlockedWordForChat(String text, String chatId, String username) {
+        if (!contentFilterEnabled) return false;
+        if (text == null || text.isEmpty()) return false;
+        if (isExplicitlyAllowed(chatId != null ? chatId : "", username)) return false;
+        String lower = text.toLowerCase();
+        for (String word : blockedWords) {
+            if (lower.contains(word)) return true;
+        }
+        return false;
     }
 
+    /** Legacy overload without allow-list exemption. Prefer containsBlockedWordForChat for chat contexts. */
     public synchronized boolean containsBlockedWord(String text) {
-        if (!contentFilterEnabled) return false; // zero-cost guard when filter is off
+        if (!contentFilterEnabled) return false;
         if (text == null || text.isEmpty()) return false;
         String lower = text.toLowerCase();
         for (String word : blockedWords) {
@@ -312,37 +473,28 @@ public class AskanFilter {
         return false;
     }
 
-    public synchronized boolean isContentFilterEnabled() {
-        return contentFilterEnabled;
-    }
-
     // ─── Self-block ───────────────────────────────────────────────────────────
 
     public void sendBlock(String phone, long telegramId, String chatUsername) {
         new Thread(() -> {
             try {
-                URL url = new URL(SERVER_URL + "/api/block");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setDoOutput(true);
+                String token = acquireToken(phone, telegramId);
+                if (token == null) { FileLog.e("AskanFilter: sendBlock — no token"); return; }
 
                 JSONObject body = new JSONObject();
-                body.put("phone", phone);
                 body.put("chat_username", chatUsername);
                 body.put("action", "block");
 
-                byte[] bodyBytes = body.toString().getBytes("UTF-8");
-                conn.getOutputStream().write(bodyBytes);
-
-                int status = conn.getResponseCode();
-                Log.d("AskanFilter", "sendBlock → status " + status);
-
-                if (status == 200) {
-                    fetchPermissions(phone, telegramId); // refresh with real id — never -1
+                HttpResult r = postJson(SERVER_URL + "/api/block", body, token);
+                if (r.code == 401) {
+                    clearToken();
+                    token = issueNewToken(phone, telegramId);
+                    if (token != null) r = postJson(SERVER_URL + "/api/block", body, token);
                 }
+
+                Log.d("AskanFilter", "sendBlock → " + r.code);
+                if (r.code == 200) fetchPermissions(phone, telegramId);
+
             } catch (Exception e) {
                 FileLog.e("AskanFilter: sendBlock failed", e);
             }
@@ -355,9 +507,9 @@ public class AskanFilter {
         public final int id;
         public final String chatUsername;
         public final String chatName;
-        public final String status;       // "pending" or "rejected"
-        public final String kind;         // "access" or "privacy"
-        public final String privacyTarget; // "profile_photos" or "stories"; null for access
+        public final String status;
+        public final String kind;
+        public final String privacyTarget;
 
         public RequestInfo(int id, String chatUsername, String chatName, String status,
                            String kind, String privacyTarget) {
@@ -377,35 +529,32 @@ public class AskanFilter {
     public void fetchMyRequests(String phone, long telegramId, RequestsCallback callback) {
         new Thread(() -> {
             try {
-                String urlStr = SERVER_URL + "/api/requests/mine?phone=" + phone
-                        + "&telegram_id=" + telegramId;
-                URL url = new URL(urlStr);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-
-                int code = conn.getResponseCode();
-                if (code != 200) {
-                    AndroidUtilities.runOnUIThread(() -> {
-                        if (callback != null) callback.onResult(new ArrayList<>());
-                    });
+                String token = acquireToken(phone, telegramId);
+                if (token == null) {
+                    FileLog.e("AskanFilter: fetchMyRequests — no token");
+                    AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(new ArrayList<>()); });
                     return;
                 }
 
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(conn.getInputStream()));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
-                reader.close();
+                HttpResult r = getWithToken(SERVER_URL + "/api/requests/mine", token);
+                if (r.code == 401) {
+                    clearToken();
+                    token = issueNewToken(phone, telegramId);
+                    r = (token != null)
+                            ? getWithToken(SERVER_URL + "/api/requests/mine", token)
+                            : new HttpResult(401, "");
+                }
 
-                JSONArray arr = new JSONArray(sb.toString());
+                if (r.code != 200) {
+                    AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(new ArrayList<>()); });
+                    return;
+                }
+
+                JSONArray arr = new JSONArray(r.body);
                 List<RequestInfo> list = new ArrayList<>();
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject obj = arr.getJSONObject(i);
-                    String privTarget = (!obj.isNull("privacy_target"))
-                            ? obj.optString("privacy_target", null) : null;
+                    String privTarget = obj.isNull("privacy_target") ? null : obj.optString("privacy_target", null);
                     list.add(new RequestInfo(
                             obj.optInt("id", 0),
                             obj.optString("chat_username", ""),
@@ -414,15 +563,11 @@ public class AskanFilter {
                             obj.optString("kind", "access"),
                             privTarget));
                 }
-                AndroidUtilities.runOnUIThread(() -> {
-                    if (callback != null) callback.onResult(list);
-                });
+                AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(list); });
 
             } catch (Exception e) {
                 FileLog.e("AskanFilter: fetchMyRequests failed", e);
-                AndroidUtilities.runOnUIThread(() -> {
-                    if (callback != null) callback.onResult(new ArrayList<>());
-                });
+                AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(new ArrayList<>()); });
             }
         }).start();
     }
@@ -434,45 +579,46 @@ public class AskanFilter {
                                  Runnable onSuccess, Runnable onError) {
         new Thread(() -> {
             try {
-                URL url = new URL(SERVER_URL + "/api/privacy/hide");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setDoOutput(true);
+                String token = acquireToken(phone, telegramId);
+                if (token == null) {
+                    FileLog.e("AskanFilter: selfHidePrivacy — no token");
+                    AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
+                    return;
+                }
 
                 JSONObject body = new JSONObject();
-                body.put("phone", phone);
-                body.put("telegram_id", telegramId);
                 if (hideProfilePhotos) body.put("hide_profile_photos", true);
                 if (hideStories)       body.put("hide_stories", true);
-                conn.getOutputStream().write(body.toString().getBytes("UTF-8"));
 
-                int code = conn.getResponseCode();
-                java.io.InputStream stream = (code == 200)
-                        ? conn.getInputStream() : conn.getErrorStream();
-                BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
-                reader.close();
+                HttpResult r = postJson(SERVER_URL + "/api/privacy/hide", body, token);
+                if (r.code == 401) {
+                    clearToken();
+                    token = issueNewToken(phone, telegramId);
+                    r = (token != null)
+                            ? postJson(SERVER_URL + "/api/privacy/hide", body, token)
+                            : new HttpResult(401, "");
+                }
 
-                if (code == 200) {
-                    JSONObject resp = new JSONObject(sb.toString());
-                    boolean photos  = resp.optBoolean("show_profile_photos", true);
-                    boolean stories = resp.optBoolean("show_stories", true);
-                    synchronized (AskanFilter.this) {
-                        showProfilePhotos = photos;
-                        showStories = stories;
+                final HttpResult result = r;
+                if (result.code == 200) {
+                    try {
+                        JSONObject resp = new JSONObject(result.body);
+                        boolean photos  = resp.optBoolean("show_profile_photos", true);
+                        boolean stories = resp.optBoolean("show_stories", true);
+                        synchronized (AskanFilter.this) {
+                            showProfilePhotos = photos;
+                            showStories = stories;
+                        }
+                        ApplicationLoader.applicationContext
+                                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                .edit()
+                                .putBoolean("show_profile_photos", photos)
+                                .putBoolean("show_stories", stories)
+                                .apply();
+                        AndroidUtilities.runOnUIThread(() -> { if (onSuccess != null) onSuccess.run(); });
+                    } catch (Exception e) {
+                        AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
                     }
-                    SharedPreferences prefs = ApplicationLoader.applicationContext
-                            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                    prefs.edit()
-                            .putBoolean("show_profile_photos", photos)
-                            .putBoolean("show_stories", stories)
-                            .apply();
-                    AndroidUtilities.runOnUIThread(() -> { if (onSuccess != null) onSuccess.run(); });
                 } else {
                     AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
                 }
@@ -489,35 +635,30 @@ public class AskanFilter {
                                            Runnable onSuccess, Runnable onError) {
         new Thread(() -> {
             try {
-                URL url = new URL(SERVER_URL + "/api/requests/privacy");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                conn.setDoOutput(true);
+                String token = acquireToken(phone, telegramId);
+                if (token == null) {
+                    FileLog.e("AskanFilter: sendPrivacyRestoreRequest — no token");
+                    AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
+                    return;
+                }
 
                 JSONObject body = new JSONObject();
-                body.put("phone", phone);
-                body.put("telegram_id", telegramId);
                 body.put("target", target);
-                conn.getOutputStream().write(body.toString().getBytes("UTF-8"));
 
-                int code = conn.getResponseCode();
-                java.io.InputStream stream = (code >= 200 && code < 300)
-                        ? conn.getInputStream() : conn.getErrorStream();
-                BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line);
-                reader.close();
-
-                if (code >= 200 && code < 300) {
-                    // both "pending" and "already_pending" → success for the UI
-                    AndroidUtilities.runOnUIThread(() -> { if (onSuccess != null) onSuccess.run(); });
-                } else {
-                    AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
+                HttpResult r = postJson(SERVER_URL + "/api/requests/privacy", body, token);
+                if (r.code == 401) {
+                    clearToken();
+                    token = issueNewToken(phone, telegramId);
+                    r = (token != null)
+                            ? postJson(SERVER_URL + "/api/requests/privacy", body, token)
+                            : new HttpResult(401, "");
                 }
+
+                final boolean ok = r.code >= 200 && r.code < 300;
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (ok) { if (onSuccess != null) onSuccess.run(); }
+                    else    { if (onError != null)   onError.run();   }
+                });
             } catch (Exception e) {
                 FileLog.e("AskanFilter: sendPrivacyRestoreRequest failed", e);
                 AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
@@ -525,41 +666,158 @@ public class AskanFilter {
         }).start();
     }
 
-    // חיפוש חסום אם אין מילים מותרות (ריזרב לשימוש עתידי)
-    public synchronized boolean isSearchBlocked() {
-        return !blockedWords.isEmpty();
+    // ─── Request status polling — in-app notifications ────────────────────────
+
+    private static final String PREFS_REQ_STATUSES = "askan_req_statuses";
+    private static final String NOTIF_CHANNEL_ASKAN = "askan_requests";
+
+    public void checkRequestStatusChanges(String phone, long telegramId) {
+        fetchMyRequests(phone, telegramId, requests -> {
+            SharedPreferences prefs = ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_REQ_STATUSES, Context.MODE_PRIVATE);
+            SharedPreferences.Editor editor = prefs.edit();
+
+            for (RequestInfo req : requests) {
+                String key = "req_" + req.id;
+                String savedStatus = prefs.getString(key, "pending");
+                if ("pending".equals(savedStatus) && !"pending".equals(req.status)) {
+                    String title = "TeleGlatt — בקשת גישה";
+                    String text;
+                    if ("approved".equals(req.status)) {
+                        String target = "access".equals(req.kind)
+                                ? ("@" + req.chatUsername)
+                                : ("privacy".equals(req.kind) ? "פרטיות" : req.chatUsername);
+                        text = "✅ הבקשה שלך ל-" + target + " אושרה!";
+                    } else {
+                        text = "❌ הבקשה שלך נדחתה";
+                    }
+                    postLocalNotification(req.id, title, text);
+                }
+                editor.putString(key, req.status);
+            }
+            editor.apply();
+        });
     }
 
-    public synchronized int getMaxMegagroupSize() {
-        return maxMegagroupSize;
+    private void postLocalNotification(int id, String title, String text) {
+        Context ctx = ApplicationLoader.applicationContext;
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel ch = new NotificationChannel(
+                    NOTIF_CHANNEL_ASKAN, "עדכוני בקשות", NotificationManager.IMPORTANCE_DEFAULT);
+            nm.createNotificationChannel(ch);
+        }
+
+        android.app.Notification.Builder builder;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new android.app.Notification.Builder(ctx, NOTIF_CHANNEL_ASKAN);
+        } else {
+            builder = new android.app.Notification.Builder(ctx);
+        }
+        builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+               .setContentTitle(title)
+               .setContentText(text)
+               .setAutoCancel(true);
+        nm.notify(10000 + id, builder.build());
     }
 
-    // ─── Central block checks (shared by ChatActivity + DialogsAdapter) ────────
+    // ─── VPN detection & reporting ────────────────────────────────────────────
+
+    private static final String[] VPN_PACKAGES = {
+            "com.askan.vpn",
+            "com.canopy.vpn.filter"
+    };
+
+    public JSONArray detectVpnApps() {
+        JSONArray result = new JSONArray();
+        PackageManager pm = ApplicationLoader.applicationContext.getPackageManager();
+        for (String pkg : VPN_PACKAGES) {
+            try {
+                ApplicationInfo info = pm.getApplicationInfo(pkg, PackageManager.GET_META_DATA);
+                JSONObject entry = new JSONObject();
+                entry.put("package", pkg);
+                entry.put("version_name", pm.getPackageInfo(pkg, 0).versionName);
+                entry.put("version_code", pm.getPackageInfo(pkg, 0).versionCode);
+                if (info.metaData != null) {
+                    JSONObject meta = new JSONObject();
+                    for (String key : info.metaData.keySet()) {
+                        Object val = info.metaData.get(key);
+                        meta.put(key, val != null ? val.toString() : JSONObject.NULL);
+                    }
+                    entry.put("meta", meta);
+                }
+                result.put(entry);
+            } catch (PackageManager.NameNotFoundException ignored) {
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: detectVpnApps " + pkg, e);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Reports detected VPN apps. Must be called AFTER token is confirmed (via fetchPermissions).
+     * Fire-and-forget with one 401 retry.
+     */
+    public void reportVpnApps(String phone, long telegramId) {
+        JSONArray apps = detectVpnApps();
+        if (apps.length() == 0) return;
+
+        new Thread(() -> {
+            try {
+                String token = deviceToken != null ? deviceToken : acquireToken(phone, telegramId);
+                if (token == null) { FileLog.e("AskanFilter: reportVpnApps — no token"); return; }
+
+                JSONObject body = new JSONObject();
+                body.put("vpn_apps", apps);
+
+                HttpResult r = postJson(SERVER_URL + "/api/report", body, token);
+                if (r.code == 401) {
+                    clearToken();
+                    token = issueNewToken(phone, telegramId);
+                    if (token != null) r = postJson(SERVER_URL + "/api/report", body, token);
+                }
+                Log.d("AskanFilter", "reportVpnApps → " + r.code);
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: reportVpnApps failed", e);
+            }
+        }).start();
+    }
+
+    // ─── Central block checks ─────────────────────────────────────────────────
 
     /**
      * Returns true if the chat should be blocked.
-     * All megagroups are blocked unless they are a discussion group of an approved channel.
-     * If chatFull is null we cannot verify the exemption → fail-closed (block).
+     *
+     * Check order (explicit before type-based defaults):
+     *   0. Explicit user-block (blockedChats) — overrides everything, ALL chat types including basic groups.
+     *   1. Basic groups — not filtered by Askan beyond explicit blocks.
+     *   2. Megagroups — blocked unless on allow list or linked to an approved channel.
+     *   3. Channels/bots — blocked unless on allow list.
      */
     public synchronized boolean isChatBlocked(TLRPC.Chat chat, TLRPC.ChatFull chatFull) {
         if (chat == null) return false;
 
-        // user_block overrides everything — checked before allow-list logic
-        String idBlock = String.valueOf(chat.id);
-        String unameBlock = chat.username;
-        if (blockedChats.contains(idBlock) || (unameBlock != null && blockedChats.contains(unameBlock)))
+        // Rule 0: explicit user-block — checked FIRST for ALL types, including basic groups
+        String idStr = String.valueOf(chat.id);
+        String uname = chat.username;
+        if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
             return true;
 
-        // Rule #1: all megagroups blocked unless explicitly approved or a discussion group
+        // Rule 1: basic groups — not filtered by Askan (explicit block above is the only check)
+        if (!ChatObject.isMegagroup(chat) && !ChatObject.isChannelAndNotMegaGroup(chat)) {
+            return false;
+        }
+
+        // Rule 2: megagroup
         if (ChatObject.isMegagroup(chat)) {
-            // 1a. group itself is on the allow list
-            String idStr0 = String.valueOf(chat.id);
-            String uname0 = chat.username;
-            if (globalAllow.contains(idStr0) || userAllow.contains(idStr0)
-                    || (uname0 != null && (globalAllow.contains(uname0) || userAllow.contains(uname0)))) {
+            if (globalAllow.contains(idStr) || userAllow.contains(idStr)
+                    || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))) {
                 return false;
             }
-            // 1b. discussion group of an approved channel
+            // Discussion group of an approved channel
             if (chatFull != null && chatFull.linked_chat_id != 0) {
                 String linkedId = String.valueOf(chatFull.linked_chat_id);
                 if (globalAllow.contains(linkedId) || userAllow.contains(linkedId)) {
@@ -569,35 +827,42 @@ public class AskanFilter {
             return true;
         }
 
-        // Rule #2: unauthorized channel
-        if (ChatObject.isChannelAndNotMegaGroup(chat)) {
-            String idStr = String.valueOf(chat.id);
-            String username = chat.username;
-            boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
-                    || (username != null && (globalAllow.contains(username) || userAllow.contains(username)));
-            return !allowed;
-        }
-
-        return false;
+        // Rule 3: channel
+        boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+        return !allowed;
     }
 
     /**
-     * Returns true if the user (bot) should be blocked.
+     * Cold-start helpers — used when TLRPC.Chat/User is not yet in MessagesController cache.
+     * Check the persisted SharedPreferences sets directly; safe to call from any thread.
+     *
+     * Limitation: allow/block lists may store usernames while these helpers receive numeric IDs.
+     * isExplicitlyBlockedById: basic groups blocked by numeric ID — correctly caught.
+     *   Username-blocked channels in cold-start fail-CLOSED via isBlockedByAskan anyway.
+     * isExplicitlyAllowedById: channels stored by username in globalAllow will be missed;
+     *   result is fail-CLOSED (notification suppressed until app opens). Intentional and safe.
+     * When TLRPC.Chat is in memory, use isChatBlocked() which checks both ID and username.
      */
+    public synchronized boolean isExplicitlyBlockedById(String id) {
+        return blockedChats.contains(id);
+    }
+
+    public synchronized boolean isExplicitlyAllowedById(String id) {
+        return globalAllow.contains(id) || userAllow.contains(id);
+    }
+
     public synchronized boolean isUserBlocked(TLRPC.User user) {
         if (user == null) return false;
 
-        // user_block overrides everything — option A: applies even to non-bots
-        String idBlock = String.valueOf(user.id);
-        String unameBlock = user.username;
-        if (blockedChats.contains(idBlock) || (unameBlock != null && blockedChats.contains(unameBlock)))
+        String idStr = String.valueOf(user.id);
+        String uname = user.username;
+        if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
             return true;
 
         if (!user.bot) return false;
-        String idStr = String.valueOf(user.id);
-        String username = user.username;
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
-                || (username != null && (globalAllow.contains(username) || userAllow.contains(username)));
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
         return !allowed;
     }
 }

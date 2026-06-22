@@ -71,6 +71,7 @@ import org.telegram.messenger.utils.tlutils.TlUtils;
 import org.telegram.messenger.voip.VoIPGroupNotification;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.messenger.askan.AskanFilter;
 import org.telegram.tgnet.tl.TL_account;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.BubbleActivity;
@@ -1219,7 +1220,7 @@ public class NotificationsController extends BaseController {
                 if (BuildVars.LOGS_ENABLED) {
                     FileLog.d("NotificationsController: process new messages, value is " + value + " ("+dialogId+", "+isChannel+", "+messageObject.isReactionPush+", "+messageObject.isStoryReactionPush+")");
                 }
-                if (value) {
+                if (value && !isBlockedByAskan(dialogId, messageObject)) {
                     if (!isFcm) {
                         popup = addToPopupMessages(popupArrayAdd, messageObject, dialogId, isChannel, preferences);
                     }
@@ -1349,6 +1350,46 @@ public class NotificationsController extends BaseController {
                 countDownLatch.countDown();
             }
         });
+    }
+
+    // Askan: returns true if the notification should be suppressed by content filtering
+    private boolean isBlockedByAskan(long dialogId, MessageObject messageObject) {
+        AskanFilter filter = AskanFilter.getInstance();
+        if (DialogObject.isChatDialog(dialogId)) {
+            long chatId = -dialogId;
+            String idStr = String.valueOf(chatId);
+            // Cold-start fast path: explicit block is always checked first, regardless of chat cache
+            if (filter.isExplicitlyBlockedById(idStr)) return true;
+
+            TLRPC.Chat chat = getMessagesController().getChat(chatId);
+            if (chat != null) {
+                // Normal path: TLRPC.Chat in memory → full check
+                return filter.isChatBlocked(chat, null);
+            }
+            // FCM cold-start: TLRPC.Chat not yet in cache.
+            // Use peer_id to distinguish channel/megagroup from basic group.
+            boolean isChannelOrMegagroup = messageObject != null
+                    && messageObject.messageOwner != null
+                    && messageObject.messageOwner.peer_id != null
+                    && messageObject.messageOwner.peer_id.channel_id != 0;
+            if (!isChannelOrMegagroup) {
+                return false; // basic group: not filtered by Askan
+            }
+            // Channel or megagroup: check allow list, then fail-CLOSED
+            if (filter.isExplicitlyAllowedById(idStr)) return false;
+            return true; // unknown channel/megagroup → fail-CLOSED
+        } else if (dialogId > 0) {
+            // DM or bot — check explicit block first (covers all types including bots)
+            String idStr = String.valueOf(dialogId);
+            if (filter.isExplicitlyBlockedById(idStr)) return true;
+
+            TLRPC.User user = getMessagesController().getUser(dialogId);
+            if (user != null) {
+                return filter.isUserBlocked(user);
+            }
+            return false; // cold-start DM: not explicitly blocked → fail-open
+        }
+        return false;
     }
 
     private void appendMessage(MessageObject messageObject) {

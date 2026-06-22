@@ -51,13 +51,29 @@ public class AskanUiHelper {
 
             AskanFilter.getInstance().sendAccessRequest(
                     phone, chatUsername, chatName, note,
-                    () -> {
-                        Toast.makeText(ctx, "בקשתך נשלחה ותיבדק על ידי המנהל",
-                                Toast.LENGTH_LONG).show();
-                        if (onSent != null) onSent.run();
-                    },
-                    () -> Toast.makeText(ctx, "הבקשה לא התקבלה, נסה שוב מאוחר יותר",
-                            Toast.LENGTH_LONG).show()
+                    status -> {
+                        String msg;
+                        switch (status) {
+                            case "pending":
+                            case "already_pending":
+                                msg = "בקשתך נשלחה ותיבדק על ידי המנהל";
+                                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
+                                if (onSent != null) onSent.run();
+                                return;
+                            case "globally_blocked":
+                                msg = "תוכן זה אינו זמין";
+                                break;
+                            case "blocked":
+                                msg = "הגעת למקסימום הניסיונות";
+                                break;
+                            case "rejected":
+                                msg = "הבקשה נדחתה";
+                                break;
+                            default:
+                                msg = "הבקשה לא התקבלה, נסה שוב מאוחר יותר";
+                        }
+                        Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
+                    }
             );
         });
         noteBuilder.setNegativeButton("ביטול", null);

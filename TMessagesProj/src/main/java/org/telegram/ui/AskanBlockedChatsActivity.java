@@ -364,11 +364,11 @@ public class AskanBlockedChatsActivity extends BaseFragment {
             boolean isPending = "pending".equals(item.requestStatus);
             if (isPending) {
                 statusView.setText("ממתין לאישור ⏳");
-                statusView.setTextColor(0xFFFF9800);
+                statusView.setTextColor(Theme.getColor(Theme.key_color_orange));
                 retryButton.setVisibility(View.GONE);
             } else {
                 statusView.setText("נדחה ❌");
-                statusView.setTextColor(0xFFF44336);
+                statusView.setTextColor(Theme.getColor(Theme.key_text_RedBold));
 
                 retryButton.setVisibility(View.VISIBLE);
                 if (item.retrySent) {
@@ -554,7 +554,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                     // Waiting for admin approval — show state, no action button
                     requestButton.setVisibility(View.GONE);
                     hintView.setText("ממתין לאישור ⏳");
-                    hintView.setTextColor(0xFFFF9800);
+                    hintView.setTextColor(Theme.getColor(Theme.key_color_orange));
                 } else {
                     // Hidden, no pending request — offer "בקש להציג"
                     requestButton.setVisibility(View.VISIBLE);
@@ -562,7 +562,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                     requestButton.setAlpha(1f);
                     requestButton.setEnabled(true);
                     hintView.setText("מוסתר");
-                    hintView.setTextColor(0xFFFF9800);
+                    hintView.setTextColor(Theme.getColor(Theme.key_color_orange));
 
                     requestButton.setOnClickListener(v -> {
                         requestButton.setEnabled(false);
