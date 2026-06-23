@@ -3342,7 +3342,8 @@ public class ChatActivity extends BaseFragment implements
 
         AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
         builder.setTitle(subject + " חסום");
-        builder.setMessage(subject + " זה אינו מאושר לשימוש באפליקציה.\nניתן לשלוח בקשת גישה למנהל.");
+        String displayName = name.isEmpty() ? subject : "“" + name + "”";
+        builder.setMessage(displayName + " אינו מאושר לשימוש באפליקציה.\nניתן לשלוח בקשת גישה למנהל.");
         builder.setPositiveButton("בקש גישה", (dialog, which) -> {
             showAccessRequestNoteDialog(ctx, chatUsername, chatName, subject);
         });
@@ -10997,7 +10998,15 @@ public class ChatActivity extends BaseFragment implements
 
     private ArrayList<TLRPC.Chat> nextChannels;
     public void setNextChannels(ArrayList<TLRPC.Chat> channels) {
-        nextChannels = channels;
+        if (channels == null) { nextChannels = null; return; }
+        org.telegram.messenger.askan.AskanFilter f = org.telegram.messenger.askan.AskanFilter.getInstance();
+        nextChannels = new ArrayList<>();
+        for (TLRPC.Chat c : channels) {
+            if (!f.isChatBlocked(c, null)
+                    && !f.containsBlockedWordForChat(c.title, String.valueOf(c.id), c.username)) {
+                nextChannels.add(c);
+            }
+        }
     }
 
     private void addToPulledDialogsMyself() {

@@ -2,10 +2,13 @@ package org.telegram.messenger.askan;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.util.Log;
 
@@ -24,8 +27,10 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class AskanFilter {
@@ -45,6 +50,9 @@ public class AskanFilter {
     private final Set<String> userAllow = new HashSet<>();
     private final Set<String> blockedWords = new HashSet<>();
     private final Set<String> blockedChats = new HashSet<>();
+    // Persisted map: numericId → username, built opportunistically when TLRPC.Chat is available.
+    // Used by isExplicitlyAllowedById in FCM cold-start to resolve username from numeric ID.
+    private final HashMap<String, String> usernameById = new HashMap<>();
 
     // Device token — persisted across sessions. Issued via POST /api/auth/device.
     // Stored in SharedPreferences key "device_token".
@@ -410,6 +418,15 @@ public class AskanFilter {
 
                 Set<String> bc = prefs.getStringSet("blocked_chats", null);
                 blockedChats.clear(); if (bc != null) blockedChats.addAll(bc);
+
+                Set<String> idMapSet = prefs.getStringSet("id_username_map", null);
+                usernameById.clear();
+                if (idMapSet != null) {
+                    for (String entry : idMapSet) {
+                        int sep = entry.indexOf('|');
+                        if (sep > 0) usernameById.put(entry.substring(0, sep), entry.substring(sep + 1));
+                    }
+                }
             }
 
             // Restore cached device token — avoids re-issuance on every app start
@@ -447,28 +464,44 @@ public class AskanFilter {
     public synchronized int getMaxMegagroupSize() { return maxMegagroupSize; }
 
     /**
-     * Returns true if text contains a blocked word AND the chat is not explicitly allowed.
-     * Approved chats (by ID or username) are always exempt from word-based filtering.
-     * Use this for chat-name filtering in search results and open-chat checks.
+     * Returns true if text contains a blocked word at a word boundary.
+     * Blocked words override all allow-lists — no channel is exempt.
+     * Uses character-level boundary check (works for Hebrew and Latin).
      */
     public synchronized boolean containsBlockedWordForChat(String text, String chatId, String username) {
         if (!contentFilterEnabled) return false;
         if (text == null || text.isEmpty()) return false;
-        if (isExplicitlyAllowed(chatId != null ? chatId : "", username)) return false;
         String lower = text.toLowerCase();
         for (String word : blockedWords) {
-            if (lower.contains(word)) return true;
+            if (matchesWordBoundary(lower, word.toLowerCase())) return true;
         }
         return false;
     }
 
-    /** Legacy overload without allow-list exemption. Prefer containsBlockedWordForChat for chat contexts. */
+    /** Same word-boundary check without a chat context (e.g. message text). */
     public synchronized boolean containsBlockedWord(String text) {
         if (!contentFilterEnabled) return false;
         if (text == null || text.isEmpty()) return false;
         String lower = text.toLowerCase();
         for (String word : blockedWords) {
-            if (lower.contains(word)) return true;
+            if (matchesWordBoundary(lower, word.toLowerCase())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Word-boundary match that works for Hebrew and Latin text.
+     * Java's \b only handles ASCII; this checks that the characters
+     * immediately before and after the match are not letters.
+     */
+    private boolean matchesWordBoundary(String text, String word) {
+        int idx = text.indexOf(word);
+        while (idx >= 0) {
+            boolean startOk = idx == 0 || !Character.isLetter(text.charAt(idx - 1));
+            boolean endOk   = idx + word.length() >= text.length()
+                              || !Character.isLetter(text.charAt(idx + word.length()));
+            if (startOk && endOk) return true;
+            idx = text.indexOf(word, idx + 1);
         }
         return false;
     }
@@ -683,15 +716,19 @@ public class AskanFilter {
                 if ("pending".equals(savedStatus) && !"pending".equals(req.status)) {
                     String title = "TeleGlatt — בקשת גישה";
                     String text;
+                    String tapUrl = null;
                     if ("approved".equals(req.status)) {
                         String target = "access".equals(req.kind)
                                 ? ("@" + req.chatUsername)
                                 : ("privacy".equals(req.kind) ? "פרטיות" : req.chatUsername);
                         text = "✅ הבקשה שלך ל-" + target + " אושרה!";
+                        if ("access".equals(req.kind) && req.chatUsername != null && !req.chatUsername.isEmpty()) {
+                            tapUrl = "https://t.me/" + req.chatUsername;
+                        }
                     } else {
                         text = "❌ הבקשה שלך נדחתה";
                     }
-                    postLocalNotification(req.id, title, text);
+                    postLocalNotification(req.id, title, text, tapUrl);
                 }
                 editor.putString(key, req.status);
             }
@@ -699,7 +736,7 @@ public class AskanFilter {
         });
     }
 
-    private void postLocalNotification(int id, String title, String text) {
+    private void postLocalNotification(int id, String title, String text, String tapUrl) {
         Context ctx = ApplicationLoader.applicationContext;
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
@@ -719,7 +756,20 @@ public class AskanFilter {
         builder.setSmallIcon(android.R.drawable.ic_dialog_info)
                .setContentTitle(title)
                .setContentText(text)
+               .setStyle(new android.app.Notification.BigTextStyle().bigText(text))
                .setAutoCancel(true);
+
+        if (tapUrl != null) {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(tapUrl));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent pi = PendingIntent.getActivity(ctx, 10000 + id, intent, flags);
+            builder.setContentIntent(pi);
+        }
+
         nm.notify(10000 + id, builder.build());
     }
 
@@ -803,6 +853,8 @@ public class AskanFilter {
         // Rule 0: explicit user-block — checked FIRST for ALL types, including basic groups
         String idStr = String.valueOf(chat.id);
         String uname = chat.username;
+        // Opportunistic: record id→username so FCM cold-start can resolve the allow-list by username
+        recordIdMapping(idStr, uname);
         if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
             return true;
 
@@ -834,22 +886,46 @@ public class AskanFilter {
     }
 
     /**
-     * Cold-start helpers — used when TLRPC.Chat/User is not yet in MessagesController cache.
-     * Check the persisted SharedPreferences sets directly; safe to call from any thread.
-     *
-     * Limitation: allow/block lists may store usernames while these helpers receive numeric IDs.
-     * isExplicitlyBlockedById: basic groups blocked by numeric ID — correctly caught.
-     *   Username-blocked channels in cold-start fail-CLOSED via isBlockedByAskan anyway.
-     * isExplicitlyAllowedById: channels stored by username in globalAllow will be missed;
-     *   result is fail-CLOSED (notification suppressed until app opens). Intentional and safe.
-     * When TLRPC.Chat is in memory, use isChatBlocked() which checks both ID and username.
+     * Records numericId→username in the persisted map so FCM cold-start can resolve allow-list
+     * lookups. Called within synchronized context; .apply() is non-blocking.
+     * Only writes to SharedPreferences when the mapping is new or changed.
      */
+    private void recordIdMapping(String idStr, String username) {
+        if (username == null || username.isEmpty()) return;
+        if (username.equals(usernameById.get(idStr))) return;
+        usernameById.put(idStr, username);
+        Set<String> snapshot = new HashSet<>(usernameById.size());
+        for (Map.Entry<String, String> e : usernameById.entrySet()) {
+            snapshot.add(e.getKey() + "|" + e.getValue());
+        }
+        ApplicationLoader.applicationContext
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putStringSet("id_username_map", snapshot).apply();
+    }
+
+    // ─── Cold-start helpers ───────────────────────────────────────────────────
+    // Used when TLRPC.Chat is not yet in MessagesController cache (FCM push, app killed).
+    // usernameById is populated opportunistically by isChatBlocked whenever a TLRPC.Chat is seen.
+    // Channels seen at least once resolve correctly; never-seen channels remain fail-CLOSED (safe).
+
     public synchronized boolean isExplicitlyBlockedById(String id) {
         return blockedChats.contains(id);
     }
 
+    /** Used by swipe-between-channels to skip blocked channels without opening them. */
+    public synchronized boolean isChannelBlockedForNav(String chatId, String username) {
+        if (chatId != null && blockedChats.contains(chatId)) return true;
+        return username != null && blockedChats.contains(username);
+    }
+
     public synchronized boolean isExplicitlyAllowedById(String id) {
-        return globalAllow.contains(id) || userAllow.contains(id);
+        if (globalAllow.contains(id) || userAllow.contains(id)) return true;
+        // Resolve numeric ID → username via the persisted mapping built by isChatBlocked
+        String username = usernameById.get(id);
+        if (username != null) {
+            return globalAllow.contains(username) || userAllow.contains(username);
+        }
+        return false; // channel never seen → remain fail-CLOSED
     }
 
     public synchronized boolean isUserBlocked(TLRPC.User user) {
