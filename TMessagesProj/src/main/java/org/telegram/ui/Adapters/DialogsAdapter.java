@@ -104,7 +104,8 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
             VIEW_TYPE_STORIES = 18,
             VIEW_TYPE_ARCHIVE_FULLSCREEN = 19,
             VIEW_TYPE_GRAY_SECTION = 20,
-            VIEW_TYPE_FORWARD_TO_STORIES_CELL = 21;
+            VIEW_TYPE_FORWARD_TO_STORIES_CELL = 21,
+            VIEW_TYPE_ADS_BANNER = 22;
 
     private Context mContext;
     private ArchiveHintCell archiveHintCell;
@@ -574,7 +575,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
         return viewType != VIEW_TYPE_FLICKER && viewType != VIEW_TYPE_EMPTY && viewType != VIEW_TYPE_DIVIDER &&
                 viewType != VIEW_TYPE_SHADOW && viewType != VIEW_TYPE_HEADER &&
                 viewType != VIEW_TYPE_LAST_EMPTY && viewType != VIEW_TYPE_NEW_CHAT_HINT && viewType != VIEW_TYPE_CONTACTS_FLICKER &&
-                viewType != VIEW_TYPE_REQUIREMENTS && viewType != VIEW_TYPE_REQUIRED_EMPTY && viewType != VIEW_TYPE_STORIES && viewType != VIEW_TYPE_ARCHIVE_FULLSCREEN && viewType != VIEW_TYPE_GRAY_SECTION;
+                viewType != VIEW_TYPE_REQUIREMENTS && viewType != VIEW_TYPE_REQUIRED_EMPTY && viewType != VIEW_TYPE_STORIES && viewType != VIEW_TYPE_ARCHIVE_FULLSCREEN && viewType != VIEW_TYPE_GRAY_SECTION && viewType != VIEW_TYPE_ADS_BANNER;
     }
 
     @Override
@@ -780,6 +781,10 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
                 if (dialogsType == DialogsActivity.DIALOGS_TYPE_BOT_REQUEST_PEER) {
                     view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
                 }
+                break;
+            }
+            case VIEW_TYPE_ADS_BANNER: {
+                view = new org.telegram.messenger.askan.AdsBannerView(mContext);
                 break;
             }
         }
@@ -1008,6 +1013,12 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
                         cell.setText(getString(R.string.FilterGroups));
                         break;
                 }
+                break;
+            }
+            case VIEW_TYPE_ADS_BANNER: {
+                org.telegram.messenger.askan.AdsBannerView bannerView =
+                    (org.telegram.messenger.askan.AdsBannerView) holder.itemView;
+                bannerView.bind(org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentAd());
                 break;
             }
             case VIEW_TYPE_GRAY_SECTION: {
@@ -1487,6 +1498,12 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
         if (dialogsCount == 0 && parentFragment.isArchive()) {
             itemInternals.add(new ItemInternal(VIEW_TYPE_ARCHIVE_FULLSCREEN));
             return;
+        }
+
+        // Askan: inject ad banner as first item (main dialogs tab only, global scope)
+        if (dialogsType == 0 && folderId == 0 && !hasHints &&
+                org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentAd() != null) {
+            itemInternals.add(new ItemInternal(VIEW_TYPE_ADS_BANNER));
         }
 
         if (!hasHints && dialogsType == 0 && folderId == 0 && messagesController.isDialogsEndReached(folderId) && !forceUpdatingContacts) {

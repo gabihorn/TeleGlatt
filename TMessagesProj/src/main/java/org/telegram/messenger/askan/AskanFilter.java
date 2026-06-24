@@ -242,6 +242,7 @@ public class AskanFilter {
                 // Step 3: Authenticated calls (only after token confirmed)
                 checkRequestStatusChanges(phone, telegramId);
                 reportVpnApps(phone, telegramId);
+                AskanAdsManager.getInstance().fetchNow();
 
             } catch (Exception e) {
                 FileLog.e("AskanFilter: fetchPermissions failed", e);
@@ -441,6 +442,9 @@ public class AskanFilter {
     }
 
     // ─── Query methods ────────────────────────────────────────────────────────
+
+    /** Returns the device token for use by other Askan components (e.g. AskanAdsManager). */
+    public String getDeviceToken() { return deviceToken; }
 
     public synchronized boolean isChannelAllowed(String chatId) {
         if (chatId == null) return false;
@@ -776,8 +780,9 @@ public class AskanFilter {
     // ─── VPN detection & reporting ────────────────────────────────────────────
 
     private static final String[] VPN_PACKAGES = {
-            "com.askan.vpn",
-            "com.canopy.vpn.filter"
+            "com.askan.vpn",           // NetSpark (Askan-branded)
+            "com.netspark.mobile",     // NetSpark standard
+            "com.canopy.vpn.filter",   // Canopy
     };
 
     public JSONArray detectVpnApps() {
@@ -919,12 +924,18 @@ public class AskanFilter {
     }
 
     public synchronized boolean isExplicitlyAllowedById(String id) {
-        if (globalAllow.contains(id) || userAllow.contains(id)) return true;
+        if (globalAllow.contains(id) || userAllow.contains(id)) {
+            android.util.Log.d("ASKAN_NAV", "isExplicitlyAllowedById id=" + id + " → ALLOWED by direct id match");
+            return true;
+        }
         // Resolve numeric ID → username via the persisted mapping built by isChatBlocked
         String username = usernameById.get(id);
         if (username != null) {
-            return globalAllow.contains(username) || userAllow.contains(username);
+            boolean allowed = globalAllow.contains(username) || userAllow.contains(username);
+            android.util.Log.d("ASKAN_NAV", "isExplicitlyAllowedById id=" + id + " → username=" + username + " allowed=" + allowed + " globalAllow=" + globalAllow.size() + " userAllow=" + userAllow.size());
+            return allowed;
         }
+        android.util.Log.d("ASKAN_NAV", "isExplicitlyAllowedById id=" + id + " → NO mapping, fail-CLOSED. mapSize=" + usernameById.size());
         return false; // channel never seen → remain fail-CLOSED
     }
 

@@ -19,10 +19,13 @@
     <uses-feature android:name="android.hardware.camera2" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.proximity" android:required="false" />
 
-    <!-- Askan: NetSpark VPN detection — visibility required for packageManager.getApplicationInfo() -->
+    <!-- Askan: filter-company detection — visibility required for packageManager.getApplicationInfo()
+         Only specific known packages — no QUERY_ALL_PACKAGES (Play-compliant).
+         Add packages only after verifying the package name from an actual APK. -->
     <queries>
-        <package android:name="com.askan.vpn" />
-        <package android:name="com.canopy.vpn.filter" />
+        <package android:name="com.askan.vpn" />        <!-- NetSpark (Askan-branded) -->
+        <package android:name="com.netspark.mobile" />  <!-- NetSpark standard -->
+        <package android:name="com.canopy.vpn.filter" /> <!-- Canopy -->
     </queries>
 
     <uses-permission android:name="android.permission.READ_CLIPBOARD"/>

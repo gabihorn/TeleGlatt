@@ -11001,12 +11001,18 @@ public class ChatActivity extends BaseFragment implements
         if (channels == null) { nextChannels = null; return; }
         org.telegram.messenger.askan.AskanFilter f = org.telegram.messenger.askan.AskanFilter.getInstance();
         nextChannels = new ArrayList<>();
+        int blocked = 0;
         for (TLRPC.Chat c : channels) {
-            if (!f.isChatBlocked(c, null)
-                    && !f.containsBlockedWordForChat(c.title, String.valueOf(c.id), c.username)) {
+            boolean chatBlocked = f.isChatBlocked(c, null);
+            boolean wordBlocked = f.containsBlockedWordForChat(c.title, String.valueOf(c.id), c.username);
+            if (chatBlocked || wordBlocked) {
+                blocked++;
+                android.util.Log.d("ASKAN_NAV", "BLOCKED channel in swipe: id=" + c.id + " @" + c.username + " chatBlocked=" + chatBlocked + " wordBlocked=" + wordBlocked);
+            } else {
                 nextChannels.add(c);
             }
         }
+        android.util.Log.d("ASKAN_NAV", "setNextChannels: in=" + channels.size() + " blocked=" + blocked + " out=" + nextChannels.size());
     }
 
     private void addToPulledDialogsMyself() {

@@ -24,6 +24,9 @@ import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.askan.AskanFilter;
 import org.telegram.messenger.askan.AskanUiHelper;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.AlertDialog;
@@ -196,9 +199,25 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         items.clear();
 
         // 1. Requests section (hidden when empty)
+        // Dedup by chatUsername (keep highest id = most recent), then sort: pending first.
         if (!myRequests.isEmpty()) {
-            items.add(ListItem.header("בקשות"));
+            Map<String, AskanFilter.RequestInfo> deduped = new LinkedHashMap<>();
             for (AskanFilter.RequestInfo r : myRequests) {
+                String key = (r.chatUsername != null && !r.chatUsername.isEmpty())
+                        ? r.chatUsername : ("id_" + r.id);
+                AskanFilter.RequestInfo existing = deduped.get(key);
+                if (existing == null || r.id > existing.id) {
+                    deduped.put(key, r);
+                }
+            }
+            List<AskanFilter.RequestInfo> sorted = new ArrayList<>(deduped.values());
+            sorted.sort((a, b) -> {
+                int aOrd = "pending".equals(a.status) ? 0 : 1;
+                int bOrd = "pending".equals(b.status) ? 0 : 1;
+                return aOrd - bOrd;
+            });
+            items.add(ListItem.header("בקשות"));
+            for (AskanFilter.RequestInfo r : sorted) {
                 items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status,
                         r.kind, r.privacyTarget));
             }
