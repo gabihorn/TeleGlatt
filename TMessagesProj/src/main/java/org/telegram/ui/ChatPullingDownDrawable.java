@@ -669,12 +669,17 @@ public class ChatPullingDownDrawable implements NotificationCenter.NotificationC
         if (dialogs == null) {
             return null;
         }
+        org.telegram.messenger.askan.AskanFilter askanFilter = org.telegram.messenger.askan.AskanFilter.getInstance();
         for (int i = 0; i < dialogs.size(); i++) {
             TLRPC.Dialog dialog = dialogs.get(i);
             TLRPC.Chat chat = messagesController.getChat(-dialog.id);
             if (chat != null && dialog.id != currentDialogId && dialog.unread_count > 0 && DialogObject.isChannel(dialog) && !chat.megagroup && !messagesController.isPromoDialog(dialog.id, false)) {
                 String reason = messagesController.getRestrictionReason(chat.restriction_reason);
                 if (reason == null) {
+                    if (askanFilter.isChatBlocked(chat, null) || askanFilter.containsBlockedWordForChat(chat.title, String.valueOf(chat.id), chat.username)) {
+                        android.util.Log.d("ASKAN_NAV", "getNextUnreadDialog → SKIP blocked @" + chat.username);
+                        continue;
+                    }
                     android.util.Log.d("ASKAN_NAV", "getNextUnreadDialog → returning id=" + dialog.id + " @" + chat.username + " unread=" + dialog.unread_count);
                     return dialog;
                 }
