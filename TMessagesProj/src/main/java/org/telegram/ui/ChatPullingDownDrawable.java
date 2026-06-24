@@ -159,6 +159,7 @@ public class ChatPullingDownDrawable implements NotificationCenter.NotificationC
     public void updateDialog() {
         recommendedChannel = false;
         nextTopic = null;
+        android.util.Log.d("ASKAN_NAV", "updateDialog called — currentDialog=" + currentDialog);
         TLRPC.Dialog dialog = getNextUnreadDialog(currentDialog, folderId, filterId, true, params);
         if (dialog != null) {
             nextDialogId = dialog.id;
@@ -674,6 +675,7 @@ public class ChatPullingDownDrawable implements NotificationCenter.NotificationC
             if (chat != null && dialog.id != currentDialogId && dialog.unread_count > 0 && DialogObject.isChannel(dialog) && !chat.megagroup && !messagesController.isPromoDialog(dialog.id, false)) {
                 String reason = messagesController.getRestrictionReason(chat.restriction_reason);
                 if (reason == null) {
+                    android.util.Log.d("ASKAN_NAV", "getNextUnreadDialog → returning id=" + dialog.id + " @" + chat.username + " unread=" + dialog.unread_count);
                     return dialog;
                 }
             }

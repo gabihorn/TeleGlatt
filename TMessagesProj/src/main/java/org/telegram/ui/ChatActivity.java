@@ -10977,6 +10977,7 @@ public class ChatActivity extends BaseFragment implements
                 presentFragment(chatActivity, true);
             }
         } else if (pullingDownDrawable.getChatId() != 0) {
+            android.util.Log.d("ASKAN_NAV", "animateToNextChat → id=" + pullingDownDrawable.getChatId() + " @" + (pullingDownDrawable.nextChat != null ? pullingDownDrawable.nextChat.username : "null"));
             addToPulledDialogsMyself();
             addToPulledDialogs(pullingDownDrawable.nextChat, null, pullingDownDrawable.nextDialogId, pullingDownDrawable.dialogFolderId, pullingDownDrawable.dialogFilterId);
             Bundle bundle = new Bundle();
