@@ -198,8 +198,8 @@ public class AskanBlockedChatsActivity extends BaseFragment {
     private void buildItems() {
         items.clear();
 
-        // 1. Requests section (hidden when empty)
-        // Dedup by chatUsername (keep highest id = most recent), then sort: pending first.
+        // 1. Requests section — only pending requests (rejected are not shown here).
+        // Dedup by chatUsername (keep highest id = most recent).
         if (!myRequests.isEmpty()) {
             Map<String, AskanFilter.RequestInfo> deduped = new LinkedHashMap<>();
             for (AskanFilter.RequestInfo r : myRequests) {
@@ -210,16 +210,16 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                     deduped.put(key, r);
                 }
             }
-            List<AskanFilter.RequestInfo> sorted = new ArrayList<>(deduped.values());
-            sorted.sort((a, b) -> {
-                int aOrd = "pending".equals(a.status) ? 0 : 1;
-                int bOrd = "pending".equals(b.status) ? 0 : 1;
-                return aOrd - bOrd;
-            });
-            items.add(ListItem.header("בקשות"));
-            for (AskanFilter.RequestInfo r : sorted) {
-                items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status,
-                        r.kind, r.privacyTarget));
+            List<AskanFilter.RequestInfo> pending = new ArrayList<>();
+            for (AskanFilter.RequestInfo r : deduped.values()) {
+                if ("pending".equals(r.status)) pending.add(r);
+            }
+            if (!pending.isEmpty()) {
+                items.add(ListItem.header("בקשות"));
+                for (AskanFilter.RequestInfo r : pending) {
+                    items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status,
+                            r.kind, r.privacyTarget));
+                }
             }
         }
 
