@@ -3,6 +3,7 @@ package org.telegram.messenger.askan;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -785,6 +786,33 @@ public class AskanFilter {
             "com.canopy.vpn.filter",   // Canopy
     };
 
+    // Canopy uses activity-alias icons per distributor; only the active one is ENABLED at runtime.
+    // Package is com.canopy.vpn.filter; class names are in com.netspark.android.netsvpn namespace.
+    private static final String[][] CANOPY_DISTRIBUTOR_ALIASES = {
+            {"com.netspark.android.netsvpn.Iconaskan",    "askan"},
+            {"com.netspark.android.netsvpn.Iconnativ",    "nativ"},
+            {"com.netspark.android.netsvpn.Iconsafetec",  "safetec"},
+            {"com.netspark.android.netsvpn.Iconnetsmart", "netsmart"},
+            {"com.netspark.android.netsvpn.Iconnetspark", "netspark"},
+            {"com.netspark.android.netsvpn.Iconcanopy",   "canopy"},
+    };
+
+    /** Returns the active Canopy distributor name, or null if Canopy is not installed or distributor unknown. */
+    public static String detectCanopyDistributor() {
+        PackageManager pm = ApplicationLoader.applicationContext.getPackageManager();
+        for (String[] alias : CANOPY_DISTRIBUTOR_ALIASES) {
+            ComponentName cn = new ComponentName("com.canopy.vpn.filter", alias[0]);
+            try {
+                int state = pm.getComponentEnabledSetting(cn);
+                if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+                    Log.d("ASKAN_CANOPY", "detected distributor: " + alias[1]);
+                    return alias[1];
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
     public JSONArray detectVpnApps() {
         JSONArray result = new JSONArray();
         PackageManager pm = ApplicationLoader.applicationContext.getPackageManager();
@@ -802,6 +830,10 @@ public class AskanFilter {
                         meta.put(key, val != null ? val.toString() : JSONObject.NULL);
                     }
                     entry.put("meta", meta);
+                }
+                if ("com.canopy.vpn.filter".equals(pkg)) {
+                    String distributor = detectCanopyDistributor();
+                    if (distributor != null) entry.put("canopy_distributor", distributor);
                 }
                 result.put(entry);
             } catch (PackageManager.NameNotFoundException ignored) {
