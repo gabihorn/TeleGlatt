@@ -25,7 +25,13 @@ public class AskanAdsManager {
 
     private static final String TAG = "AskanAds";
     private static final String ADS_URL = "https://api.askansmart.com/api/ads";
+    private static final String IMAGE_BASE = "https://api.askansmart.com";
     private static final long REFRESH_MS = 30 * 60 * 1000L; // 30 min
+
+    private static String resolveUrl(String url) {
+        if (url == null || url.isEmpty()) return null;
+        return url.startsWith("http") ? url : IMAGE_BASE + url;
+    }
 
     public static class Ad {
         public final int id;
@@ -39,8 +45,8 @@ public class AskanAdsManager {
         public Ad(int id, String title, String imageUrl, String logoUrl, String bodyText, String targetUrl, String placement) {
             this.id = id;
             this.title = title;
-            this.imageUrl  = (imageUrl  != null && !imageUrl.isEmpty())  ? imageUrl  : null;
-            this.logoUrl   = (logoUrl   != null && !logoUrl.isEmpty())   ? logoUrl   : null;
+            this.imageUrl  = resolveUrl(imageUrl);
+            this.logoUrl   = resolveUrl(logoUrl);
             this.bodyText  = (bodyText  != null && !bodyText.isEmpty())  ? bodyText  : null;
             this.targetUrl = targetUrl;
             this.placement = (placement != null && !placement.isEmpty()) ? placement : "both";
