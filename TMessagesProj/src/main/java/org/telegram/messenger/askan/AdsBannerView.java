@@ -28,6 +28,14 @@ import java.net.URL;
  */
 public class AdsBannerView extends FrameLayout {
 
+    private static final android.util.LruCache<String, Bitmap> imageCache;
+    static {
+        int maxKb = (int) (Runtime.getRuntime().maxMemory() / 1024 / 8);
+        imageCache = new android.util.LruCache<String, Bitmap>(maxKb) {
+            @Override protected int sizeOf(String key, Bitmap v) { return v.getByteCount() / 1024; }
+        };
+    }
+
     private static final String IMAGE_BASE = "https://api.askansmart.com";
     private static final int HEIGHT_DP = 56;
 
@@ -88,6 +96,14 @@ public class AdsBannerView extends FrameLayout {
 
     private void loadImage(String relativeUrl) {
         final String fullUrl = relativeUrl.startsWith("http") ? relativeUrl : IMAGE_BASE + relativeUrl;
+
+        // Cache hit → show immediately, no flash
+        Bitmap cached = imageCache.get(fullUrl);
+        if (cached != null) {
+            imageView.setImageBitmap(cached);
+            return;
+        }
+
         imageView.setImageBitmap(null);
         new Thread(() -> {
             try {
@@ -99,6 +115,7 @@ public class AdsBannerView extends FrameLayout {
                 Bitmap bmp = BitmapFactory.decodeStream(in);
                 in.close();
                 if (bmp != null) {
+                    imageCache.put(fullUrl, bmp);
                     new Handler(Looper.getMainLooper()).post(() -> {
                         if (currentAd != null && currentAd.bannerImageUrl() != null
                                 && fullUrl.contains(currentAd.bannerImageUrl())) {
