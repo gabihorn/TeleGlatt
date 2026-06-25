@@ -12,7 +12,9 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Fetches ads from /api/ads (behind device-token auth).
@@ -28,17 +30,30 @@ public class AskanAdsManager {
     public static class Ad {
         public final int id;
         public final String title;
-        public final String imageUrl;  // null if no image
-        public final String bodyText;  // null if no text
+        public final String imageUrl;   // wide banner for list header
+        public final String logoUrl;    // square logo for in-channel sponsored
+        public final String bodyText;
         public final String targetUrl;
+        public final String placement;  // "banner" | "channels" | "both"
 
-        public Ad(int id, String title, String imageUrl, String bodyText, String targetUrl) {
+        public Ad(int id, String title, String imageUrl, String logoUrl, String bodyText, String targetUrl, String placement) {
             this.id = id;
             this.title = title;
-            this.imageUrl = (imageUrl != null && !imageUrl.isEmpty()) ? imageUrl : null;
-            this.bodyText = (bodyText != null && !bodyText.isEmpty()) ? bodyText : null;
+            this.imageUrl  = (imageUrl  != null && !imageUrl.isEmpty())  ? imageUrl  : null;
+            this.logoUrl   = (logoUrl   != null && !logoUrl.isEmpty())   ? logoUrl   : null;
+            this.bodyText  = (bodyText  != null && !bodyText.isEmpty())  ? bodyText  : null;
             this.targetUrl = targetUrl;
+            this.placement = (placement != null && !placement.isEmpty()) ? placement : "both";
         }
+
+        public boolean showInBanner()   { return "both".equals(placement) || "banner".equals(placement); }
+        public boolean showInChannels() { return "both".equals(placement) || "channels".equals(placement); }
+
+        /** Image for the wide banner (list header). Falls back to logo if no banner image. */
+        public String bannerImageUrl() { return imageUrl != null ? imageUrl : logoUrl; }
+
+        /** Image for in-channel sponsored. Falls back to banner image if no logo. */
+        public String channelLogoUrl() { return logoUrl != null ? logoUrl : imageUrl; }
     }
 
     public interface AdsListener {
@@ -52,6 +67,8 @@ public class AskanAdsManager {
     private boolean fetching = false;
     private final List<AdsListener> listeners = new ArrayList<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    // Chats where the user dismissed the in-channel banner this session
+    private final Set<Long> dismissedChats = new HashSet<>();
 
     private AskanAdsManager() {}
 
@@ -130,9 +147,11 @@ public class AskanAdsManager {
             Ad ad = new Ad(
                 obj.getInt("id"),
                 obj.optString("title", ""),
-                obj.optString("image_url", null),
-                obj.optString("body_text", null),
-                obj.optString("target_url", "")
+                obj.isNull("image_url")  ? null : obj.optString("image_url",  ""),
+                obj.isNull("logo_url")   ? null : obj.optString("logo_url",   ""),
+                obj.isNull("body_text")  ? null : obj.optString("body_text",  ""),
+                obj.optString("target_url", ""),
+                obj.optString("placement", "both")
             );
             Log.d(TAG, "Fetched ad id=" + ad.id + " title=" + ad.title);
             done(ad);
@@ -160,6 +179,16 @@ public class AskanAdsManager {
         if (a == null && b == null) return false;
         if (a == null || b == null) return true;
         return a.id != b.id;
+    }
+
+    // ── In-channel dismiss (per session) ─────────────────────────────────────
+
+    public synchronized void dismissForChat(long chatId) {
+        dismissedChats.add(chatId);
+    }
+
+    public synchronized boolean isDismissedForChat(long chatId) {
+        return dismissedChats.contains(chatId);
     }
 
     // ── Tracking ──────────────────────────────────────────────────────────────

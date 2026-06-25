@@ -159,7 +159,6 @@ public class ChatPullingDownDrawable implements NotificationCenter.NotificationC
     public void updateDialog() {
         recommendedChannel = false;
         nextTopic = null;
-        android.util.Log.d("ASKAN_NAV", "updateDialog called — currentDialog=" + currentDialog);
         TLRPC.Dialog dialog = getNextUnreadDialog(currentDialog, folderId, filterId, true, params);
         if (dialog != null) {
             nextDialogId = dialog.id;
@@ -677,10 +676,8 @@ public class ChatPullingDownDrawable implements NotificationCenter.NotificationC
                 String reason = messagesController.getRestrictionReason(chat.restriction_reason);
                 if (reason == null) {
                     if (askanFilter.isChatBlocked(chat, null) || askanFilter.containsBlockedWordForChat(chat.title, String.valueOf(chat.id), chat.username)) {
-                        android.util.Log.d("ASKAN_NAV", "getNextUnreadDialog → SKIP blocked @" + chat.username);
                         continue;
                     }
-                    android.util.Log.d("ASKAN_NAV", "getNextUnreadDialog → returning id=" + dialog.id + " @" + chat.username + " unread=" + dialog.unread_count);
                     return dialog;
                 }
             }

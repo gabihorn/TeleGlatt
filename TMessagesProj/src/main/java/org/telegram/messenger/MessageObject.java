@@ -258,6 +258,7 @@ public class MessageObject {
     public boolean revealingMediaSpoilers;
     public byte[] sponsoredId;
     public String sponsoredTitle, sponsoredUrl;
+    public String sponsoredImageUrl; // ASKN: URL-based logo for in-channel sponsored
     public boolean sponsoredRecommended;
     public TLRPC.Photo sponsoredPhoto;
     public String sponsoredInfo, sponsoredAdditionalInfo;

@@ -145,6 +145,7 @@ import org.telegram.messenger.ChannelBoostsController;
 import org.telegram.messenger.ChatMessageSharedResources;
 import org.telegram.messenger.ChatMessagesMetadataController;
 import org.telegram.messenger.ChatObject;
+import org.telegram.messenger.askan.AskanAdsManager;
 import org.telegram.messenger.askan.AskanFilter;
 import org.telegram.messenger.ChatThemeController;
 import org.telegram.messenger.CodeHighlighting;
@@ -10977,7 +10978,6 @@ public class ChatActivity extends BaseFragment implements
                 presentFragment(chatActivity, true);
             }
         } else if (pullingDownDrawable.getChatId() != 0) {
-            android.util.Log.d("ASKAN_NAV", "animateToNextChat → id=" + pullingDownDrawable.getChatId() + " @" + (pullingDownDrawable.nextChat != null ? pullingDownDrawable.nextChat.username : "null"));
             addToPulledDialogsMyself();
             addToPulledDialogs(pullingDownDrawable.nextChat, null, pullingDownDrawable.nextDialogId, pullingDownDrawable.dialogFolderId, pullingDownDrawable.dialogFilterId);
             Bundle bundle = new Bundle();
@@ -11002,18 +11002,11 @@ public class ChatActivity extends BaseFragment implements
         if (channels == null) { nextChannels = null; return; }
         org.telegram.messenger.askan.AskanFilter f = org.telegram.messenger.askan.AskanFilter.getInstance();
         nextChannels = new ArrayList<>();
-        int blocked = 0;
         for (TLRPC.Chat c : channels) {
-            boolean chatBlocked = f.isChatBlocked(c, null);
-            boolean wordBlocked = f.containsBlockedWordForChat(c.title, String.valueOf(c.id), c.username);
-            if (chatBlocked || wordBlocked) {
-                blocked++;
-                android.util.Log.d("ASKAN_NAV", "BLOCKED channel in swipe: id=" + c.id + " @" + c.username + " chatBlocked=" + chatBlocked + " wordBlocked=" + wordBlocked);
-            } else {
+            if (!f.isChatBlocked(c, null) && !f.containsBlockedWordForChat(c.title, String.valueOf(c.id), c.username)) {
                 nextChannels.add(c);
             }
         }
-        android.util.Log.d("ASKAN_NAV", "setNextChannels: in=" + channels.size() + " blocked=" + blocked + " out=" + nextChannels.size());
     }
 
     private void addToPulledDialogsMyself() {
@@ -24461,16 +24454,30 @@ public class ChatActivity extends BaseFragment implements
     private boolean sponsoredMessagesAdded;
     private Pattern sponsoredUrlPattern;
     private MessageObject botSponsoredMessage;
+    private MessageObject askanSponsoredMessage;
     private void addSponsoredMessages(boolean animated) {
-        if (sponsoredMessagesAdded || chatMode != 0 || !ChatObject.isChannel(currentChat) && !UserObject.isBot(currentUser) || !forwardEndReached[0] || getUserConfig().isPremium() && getMessagesController().isSponsoredDisabled() || isReport()) {
+        if (sponsoredMessagesAdded || chatMode != 0 || !ChatObject.isChannel(currentChat) && !UserObject.isBot(currentUser) || !forwardEndReached[0] || isReport()) {
             return;
         }
-        MessagesController.SponsoredMessagesInfo res = getMessagesController().getSponsoredMessages(dialog_id);
-        if (res == null || res.messages == null) {
+
+        // Telegram's sponsored messages (skipped for premium users who opted out)
+        MessagesController.SponsoredMessagesInfo res = null;
+        if (!(getUserConfig().isPremium() && getMessagesController().isSponsoredDisabled())) {
+            res = getMessagesController().getSponsoredMessages(dialog_id);
+        }
+
+        // Our Askan ad — only for explicitly allowed channels
+        AskanAdsManager.Ad askanAd = getAskanAdForChannel();
+        askanSponsoredMessage = askanAd != null ? buildAskanSponsoredMessage(askanAd) : null;
+
+        if ((res == null || res.messages == null) && askanSponsoredMessage == null) {
             return;
         }
-        for (int i = 0; i < res.messages.size(); i++) {
-            MessageObject messageObject = res.messages.get(i);
+
+        // URL processing for Telegram's messages only (our URL won't match t.me pattern)
+        ArrayList<MessageObject> telegramMessages = (res != null && res.messages != null) ? res.messages : new ArrayList<>();
+        for (int i = 0; i < telegramMessages.size(); i++) {
+            MessageObject messageObject = telegramMessages.get(i);
             messageObject.resetLayout();
             if (messageObject.sponsoredUrl != null) {
                 try {
@@ -24501,20 +24508,30 @@ public class ChatActivity extends BaseFragment implements
                 }
             }
         }
+
         sponsoredMessagesAdded = true;
         if (UserObject.isBot(currentUser)) {
-            botSponsoredMessage = res == null || res.messages == null || res.messages.isEmpty() ? null : res.messages.get(0);
+            botSponsoredMessage = telegramMessages.isEmpty() ? null : telegramMessages.get(0);
             updateTopPanel(true);
         } else {
-            sponsoredMessagesPostsBetween = res.posts_between != null ? res.posts_between : 0;
+            sponsoredMessagesPostsBetween = res != null && res.posts_between != null ? res.posts_between : 0;
             if (notPushedSponsoredMessages != null) {
                 notPushedSponsoredMessages.clear();
             }
-            processNewMessages(res.messages, false);
+            // Combined list: Askan first (renders at bottom), then Telegram's
+            ArrayList<MessageObject> combined = new ArrayList<>();
+            if (askanSponsoredMessage != null) combined.add(askanSponsoredMessage);
+            combined.addAll(telegramMessages);
+            processNewMessages(combined, animated);
         }
     }
 
     public void removeFromSponsored(MessageObject message) {
+        if (message == askanSponsoredMessage) {
+            askanSponsoredMessage = null;
+            AskanAdsManager.getInstance().dismissForChat(dialog_id);
+            return;
+        }
         if (message == botSponsoredMessage) {
             botSponsoredMessage = null;
             updateTopPanel(true);
@@ -46095,6 +46112,43 @@ public class ChatActivity extends BaseFragment implements
             // chatInputViewsContainer.getFadeView().setClipBounds(clipBoundsTmp);
         }
     }
+
+    // ── Askan in-channel sponsored ad ────────────────────────────────────────
+
+    private AskanAdsManager.Ad getAskanAdForChannel() {
+        if (currentChat == null) return null;
+        AskanFilter f = AskanFilter.getInstance();
+        if (!f.isExplicitlyAllowed(String.valueOf(currentChat.id), currentChat.username)) return null;
+        AskanAdsManager mgr = AskanAdsManager.getInstance();
+        if (mgr.isDismissedForChat(dialog_id)) return null;
+        AskanAdsManager.Ad ad = mgr.getCurrentAd();
+        if (ad != null && !ad.showInChannels()) return null;
+        return ad;
+    }
+
+    private MessageObject buildAskanSponsoredMessage(AskanAdsManager.Ad ad) {
+        try {
+            TLRPC.TL_message message = new TLRPC.TL_message();
+            message.peer_id = getMessagesController().getPeer(dialog_id);
+            message.flags |= 256;
+            message.date = getConnectionsManager().getCurrentTime();
+            message.id = -20000001;
+            message.message = ad.bodyText != null ? ad.bodyText : "";
+            MessageObject mo = new MessageObject(currentAccount, message,
+                    new LongSparseArray<>(), new LongSparseArray<>(), true, true);
+            mo.sponsoredId = new byte[]{0x41, 0x53, 0x4B, 0x4E}; // "ASKN" — non-null → isSponsored()=true
+            mo.sponsoredTitle = ad.title;
+            mo.sponsoredUrl = ad.targetUrl;
+            // channelLogoUrl() returns logo ?? imageUrl ?? null (handles all fallback cases)
+            mo.sponsoredImageUrl = ad.channelLogoUrl();
+            return mo;
+        } catch (Exception e) {
+            FileLog.e(e, false);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     private abstract class ChatListRecyclerView extends RecyclerListViewInternal {
 

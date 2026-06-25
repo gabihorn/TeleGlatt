@@ -510,6 +510,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     private ChatAvatarContainer avatarContainer;
     private int undoViewIndex;
     private UndoView[] undoView = new UndoView[2];
+    private org.telegram.messenger.askan.UpdateBannerView askanUpdateBanner;
     private FilterTabsView filterTabsView;
     private boolean askingForPermissions;
     private int searchViewPagerIndex;
@@ -5247,6 +5248,21 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             }
             contentView.addView(actionBar, layoutParams);
         //}
+
+        // Askan soft-update banner — hidden until update check returns "soft"
+        if (!onlySelect && folderId == 0) {
+            org.telegram.messenger.askan.AskanFilter f = org.telegram.messenger.askan.AskanFilter.getInstance();
+            askanUpdateBanner = new org.telegram.messenger.askan.UpdateBannerView(
+                    context, this,
+                    f.getUpdateCheckMinVersion(),
+                    f.getUpdateCheckUrl());
+            askanUpdateBanner.setVisibility(View.GONE);
+            int bannerTopDp = org.telegram.messenger.askan.UpdateBannerView.heightDp();
+            contentView.addView(askanUpdateBanner, LayoutHelper.createFrame(
+                    LayoutHelper.MATCH_PARENT, bannerTopDp, Gravity.TOP, 0,
+                    ActionBar.getCurrentActionBarHeight() / AndroidUtilities.density, 0, 0));
+        }
+
         if (!onlySelect) {
             animatedStatusView = new AnimatedStatusView(context, 20, 60);
             contentView.addView(animatedStatusView, LayoutHelper.createFrame(20, 20, Gravity.LEFT | Gravity.TOP));
@@ -6895,6 +6911,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                             .fetchPermissions(me.phone, me.id);
                 }
             }
+            checkAskanUpdateStatus();
         }
 
         if (dialogStoriesCell != null) {
@@ -7723,8 +7740,56 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         }
     }
 
+    // ── Askan update check ────────────────────────────────────────────────────
+
+    private void checkAskanUpdateStatus() {
+        if (onlySelect || folderId != 0 || getParentActivity() == null) return;
+        org.telegram.messenger.askan.AskanFilter f = org.telegram.messenger.askan.AskanFilter.getInstance();
+        String status = f.getUpdateCheckStatus();
+        if (status == null || "ok".equals(status)) {
+            if (askanUpdateBanner != null) askanUpdateBanner.setVisibility(View.GONE);
+            return;
+        }
+        if ("hard".equals(status)) {
+            if (askanUpdateBanner != null) askanUpdateBanner.setVisibility(View.GONE);
+            android.content.Intent intent = new android.content.Intent(
+                    getParentActivity(), org.telegram.messenger.askan.ForceUpdateActivity.class);
+            intent.putExtra(org.telegram.messenger.askan.ForceUpdateActivity.EXTRA_UPDATE_URL, f.getUpdateCheckUrl());
+            intent.putExtra(org.telegram.messenger.askan.ForceUpdateActivity.EXTRA_MIN_VERSION, f.getUpdateCheckMinVersion());
+            getParentActivity().startActivity(intent);
+            return;
+        }
+        if ("soft".equals(status) && askanUpdateBanner != null) {
+            // Rebuild banner with fresh URL/version (may have changed since createView)
+            if (askanUpdateBanner.getVisibility() != View.VISIBLE) {
+                // Re-create with current values
+                android.view.ViewGroup parent = (android.view.ViewGroup) askanUpdateBanner.getParent();
+                if (parent != null) {
+                    int idx = parent.indexOfChild(askanUpdateBanner);
+                    android.view.ViewGroup.LayoutParams lp = askanUpdateBanner.getLayoutParams();
+                    parent.removeView(askanUpdateBanner);
+                    askanUpdateBanner = new org.telegram.messenger.askan.UpdateBannerView(
+                            getParentActivity(), this, f.getUpdateCheckMinVersion(), f.getUpdateCheckUrl());
+                    parent.addView(askanUpdateBanner, idx, lp);
+                }
+            }
+            askanUpdateBanner.setVisibility(View.VISIBLE);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     private void onItemClick(View view, int position, RecyclerListView.Adapter adapter, float x, float y) {
         if (getParentActivity() == null) {
+            return;
+        }
+        if (view instanceof org.telegram.messenger.askan.AdsBannerView) {
+            org.telegram.messenger.askan.AskanAdsManager.Ad ad =
+                org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentAd();
+            if (ad != null) {
+                org.telegram.messenger.askan.AskanAdsManager.getInstance().sendClick(ad.id);
+                org.telegram.messenger.browser.Browser.openUrl(getParentActivity(), ad.targetUrl);
+            }
             return;
         }
         long dialogId = 0;
@@ -10283,6 +10348,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     @Override
     public void didReceivedNotification(int id, int account, Object... args) {
         if (id == NotificationCenter.dialogsNeedReload) {
+            checkAskanUpdateStatus();
             if (viewPages == null || dialogsListFrozen) {
                 return;
             }

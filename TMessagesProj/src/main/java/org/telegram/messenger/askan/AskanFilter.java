@@ -47,6 +47,10 @@ public class AskanFilter {
     private boolean showStories = true;
     private int maxMegagroupSize = 250;
     private boolean contentFilterEnabled = false;
+    // "ok" | "soft" | "hard" — null means no check received yet (fail-open)
+    private volatile String updateCheckStatus = null;
+    private volatile String updateCheckUrl = "";
+    private volatile String updateCheckMinVersion = "";
     private final Set<String> globalAllow = new HashSet<>();
     private final Set<String> userAllow = new HashSet<>();
     private final Set<String> blockedWords = new HashSet<>();
@@ -214,12 +218,27 @@ public class AskanFilter {
     public void fetchPermissions(String phone, long telegramId) {
         new Thread(() -> {
             try {
-                // Step 1: GET /api/permissions — public endpoint, no auth needed
+                // Step 1: GET /api/permissions — send cached token if available (stage B).
+                // Server currently accepts requests without token (rate-limited only).
+                // Stage C: token will become mandatory; remove the fallback then.
                 URL url = new URL(SERVER_URL + "/api/permissions/" + phone + "?telegram_id=" + telegramId);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(8000);
+                // Send cached token if present — allows server to validate identity even before stage C
+                String cachedToken = deviceToken;
+                if (cachedToken != null) {
+                    conn.setRequestProperty("X-Device-Token", cachedToken);
+                }
+                // Send app version so server can enforce min_version
+                try {
+                    android.content.pm.PackageInfo pi = ApplicationLoader.applicationContext
+                            .getPackageManager()
+                            .getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
+                    conn.setRequestProperty("X-App-Version-Code", String.valueOf(pi.versionCode));
+                    conn.setRequestProperty("X-App-Version-Name", pi.versionName != null ? pi.versionName : "");
+                } catch (Exception ignored) {}
 
                 int status = conn.getResponseCode();
                 if (status != 200) {
@@ -355,6 +374,17 @@ public class AskanFilter {
                 }
             }
 
+            // ── version_check (fail-open: absent field = no enforcement) ─────────
+            String newUpdateStatus = null;
+            String newUpdateUrl = "";
+            String newUpdateMinVersion = "";
+            JSONObject vc = root.optJSONObject("version_check");
+            if (vc != null) {
+                newUpdateStatus     = vc.optString("status", "ok");
+                newUpdateUrl        = vc.optString("update_url", "");
+                newUpdateMinVersion = vc.optString("min_version", "");
+            }
+
             synchronized (this) {
                 showProfilePhotos = photosFlag;
                 showStories = storiesFlag;
@@ -364,6 +394,9 @@ public class AskanFilter {
                 userAllow.clear();   userAllow.addAll(newUser);
                 blockedWords.clear(); blockedWords.addAll(newBlocked);
                 blockedChats.clear(); blockedChats.addAll(newBlockedChats);
+                updateCheckStatus     = newUpdateStatus;
+                updateCheckUrl        = newUpdateUrl;
+                updateCheckMinVersion = newUpdateMinVersion;
             }
 
             ApplicationLoader.applicationContext
@@ -377,6 +410,9 @@ public class AskanFilter {
                     .putStringSet("user_allow", newUser)
                     .putStringSet("blocked_words", newBlocked)
                     .putStringSet("blocked_chats", newBlockedChats)
+                    .putString("update_status",      newUpdateStatus != null ? newUpdateStatus : "")
+                    .putString("update_url",          newUpdateUrl)
+                    .putString("update_min_version",  newUpdateMinVersion)
                     .apply();
 
             FileLog.d("AskanFilter: permissions loaded — global=" + newGlobal.size()
@@ -434,6 +470,14 @@ public class AskanFilter {
             // Restore cached device token — avoids re-issuance on every app start
             deviceToken = prefs.getString("device_token", null);
 
+            // Restore cached version check status (from last successful fetch)
+            String cachedStatus = prefs.getString("update_status", "");
+            if (!cachedStatus.isEmpty()) {
+                updateCheckStatus     = cachedStatus;
+                updateCheckUrl        = prefs.getString("update_url", "");
+                updateCheckMinVersion = prefs.getString("update_min_version", "");
+            }
+
             FileLog.d("AskanFilter: loaded from cache — global=" + globalAllow.size()
                     + " token=" + (deviceToken != null ? "present" : "none"));
 
@@ -446,6 +490,11 @@ public class AskanFilter {
 
     /** Returns the device token for use by other Askan components (e.g. AskanAdsManager). */
     public String getDeviceToken() { return deviceToken; }
+
+    /** Returns "ok", "soft", "hard", or null if no check received yet (fail-open). */
+    public String getUpdateCheckStatus()     { return updateCheckStatus; }
+    public String getUpdateCheckUrl()        { return updateCheckUrl; }
+    public String getUpdateCheckMinVersion() { return updateCheckMinVersion; }
 
     public synchronized boolean isChannelAllowed(String chatId) {
         if (chatId == null) return false;
@@ -805,7 +854,6 @@ public class AskanFilter {
             try {
                 int state = pm.getComponentEnabledSetting(cn);
                 if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-                    Log.d("ASKAN_CANOPY", "detected distributor: " + alias[1]);
                     return alias[1];
                 }
             } catch (Exception ignored) {}
@@ -956,18 +1004,12 @@ public class AskanFilter {
     }
 
     public synchronized boolean isExplicitlyAllowedById(String id) {
-        if (globalAllow.contains(id) || userAllow.contains(id)) {
-            android.util.Log.d("ASKAN_NAV", "isExplicitlyAllowedById id=" + id + " → ALLOWED by direct id match");
-            return true;
-        }
+        if (globalAllow.contains(id) || userAllow.contains(id)) return true;
         // Resolve numeric ID → username via the persisted mapping built by isChatBlocked
         String username = usernameById.get(id);
         if (username != null) {
-            boolean allowed = globalAllow.contains(username) || userAllow.contains(username);
-            android.util.Log.d("ASKAN_NAV", "isExplicitlyAllowedById id=" + id + " → username=" + username + " allowed=" + allowed + " globalAllow=" + globalAllow.size() + " userAllow=" + userAllow.size());
-            return allowed;
+            return globalAllow.contains(username) || userAllow.contains(username);
         }
-        android.util.Log.d("ASKAN_NAV", "isExplicitlyAllowedById id=" + id + " → NO mapping, fail-CLOSED. mapSize=" + usernameById.size());
         return false; // channel never seen → remain fail-CLOSED
     }
 

@@ -7669,7 +7669,16 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                         author = null;
                         document = null;
                         photo = messageObject.sponsoredPhoto;
-                        isSmallImage = photo != null || peerPhoto != null;
+                        // ASKN sponsored: load logo from URL when no TLRPC.Photo is present.
+                        // Guard: only active when sponsoredId == {A,S,K,N} — Telegram native ads are unaffected.
+                        boolean hasAskanLogo = photo == null && peerPhoto == null
+                                && isAskanSponsoredMessage(messageObject)
+                                && messageObject.sponsoredImageUrl != null;
+                        if (hasAskanLogo) {
+                            currentPhotoLocation = ImageLocation.getForPath(messageObject.sponsoredImageUrl);
+                            currentPhotoFilter = "48_48";
+                        }
+                        isSmallImage = photo != null || peerPhoto != null || hasAskanLogo;
                         smallImage = true;
                         duration = 0;
                         type = null;
@@ -28825,6 +28834,12 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
 
     
     
+    private static boolean isAskanSponsoredMessage(MessageObject m) {
+        byte[] id = m.sponsoredId;
+        return id != null && id.length == 4
+                && id[0] == 0x41 && id[1] == 0x53 && id[2] == 0x4B && id[3] == 0x4E;
+    }
+
     private static boolean isSmallImageLinkPreviewType(String type) {
         return "app".equals(type) || "profile".equals(type) ||
                 "article".equals(type) || "telegram_bot".equals(type) ||
