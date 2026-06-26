@@ -1,6 +1,7 @@
 package org.telegram.messenger.askan;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.drawable.ColorDrawable;
 import android.view.Gravity;
 import android.view.View;
@@ -8,7 +9,6 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
-import org.telegram.messenger.browser.Browser;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.Components.LayoutHelper;
 
@@ -20,6 +20,8 @@ public class UpdateBannerView extends FrameLayout {
 
     public UpdateBannerView(Context context, BaseFragment fragment, String minVersion, String updateUrl) {
         super(context);
+        final String _minVersion = minVersion != null ? minVersion : "";
+        final String _updateUrl  = updateUrl  != null ? updateUrl  : "";
 
         // Orange left accent bar
         View accent = new View(context);
@@ -31,7 +33,7 @@ public class UpdateBannerView extends FrameLayout {
 
         // Text block
         TextView title = new TextView(context);
-        title.setText("יש גרסה חדשה (" + minVersion + ")");
+        title.setText("יש גרסה חדשה (" + _minVersion + ")");
         title.setTextSize(13);
         title.setTextColor(0xFFC2410C);
         title.setTypeface(AndroidUtilities.bold());
@@ -53,9 +55,12 @@ public class UpdateBannerView extends FrameLayout {
         updateBtn.setPaintFlags(updateBtn.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
         updateBtn.setClickable(true);
         updateBtn.setOnClickListener(v -> {
-            if (updateUrl != null && !updateUrl.isEmpty()) {
-                Browser.openUrl(context, updateUrl);
-            }
+            android.app.Activity activity = fragment.getParentActivity();
+            if (activity == null) return;
+            Intent intent = new Intent(activity, ForceUpdateActivity.class);
+            intent.putExtra(ForceUpdateActivity.EXTRA_UPDATE_URL, _updateUrl);
+            intent.putExtra(ForceUpdateActivity.EXTRA_MIN_VERSION, _minVersion);
+            activity.startActivity(intent);
         });
         addView(updateBtn, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.END, 0, 0, 12, 10));

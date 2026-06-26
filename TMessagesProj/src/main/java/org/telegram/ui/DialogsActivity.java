@@ -3077,7 +3077,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             @Override
             public void closeSearchField(boolean closeKeyboard) {
                 fragmentSearchField.editText.getText().clear();
-                if (closeKeyboard) {
+                if (closeKeyboard && fragmentSearchField.editText.isFocused()) {
                     AndroidUtilities.hideKeyboard(fragmentSearchField.editText);
                 }
                 fragmentSearchField.editText.clearFocus();
@@ -6903,7 +6903,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         // Refresh Askan permissions — at top to avoid any early-return misses below
         if (!onlySelect && folderId == 0) {
             long now = System.currentTimeMillis();
-            if (now - org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch > 30_000) {
+            if (now - org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch > 5 * 60 * 1000L) {
                 org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch = now;
                 TLRPC.User me = getUserConfig().getCurrentUser();
                 if (me != null && me.phone != null && !me.phone.isEmpty()) {
@@ -11315,6 +11315,18 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 for (long did : selectedDialogs) {
                     if (DialogObject.isEncryptedDialog(did)) return false;
                     if (getMessagesController().getSendPaidMessagesStars(did) > 0) return false;
+                }
+                return true;
+            }
+
+            @Override
+            public boolean canSetTimer() {
+                if (selectedDialogs.isEmpty()) return false;
+                final MessagesController mc = getMessagesController();
+                for (long did : selectedDialogs) {
+                    if (!DialogObject.isUserDialog(did)) return false;
+                    final TLRPC.User u = mc.getUser(did);
+                    if (u == null || u.bot || UserObject.isUserSelf(u)) return false;
                 }
                 return true;
             }

@@ -2431,6 +2431,12 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         proximityTouched = false;
         raiseToEarRecord = false;
         useFrontSpeaker = false;
+        // Notify UI to reset volume control stream back to media (from STREAM_VOICE_CALL).
+        // startAudioAgain() posts this only when playback starts, so we must post it on stop too.
+        if (playingMessageObject != null) {
+            NotificationCenter.getInstance(playingMessageObject.currentAccount)
+                    .postNotificationName(NotificationCenter.audioRouteChanged, false);
+        }
         Utilities.globalQueue.postRunnable(() -> {
             if (linearSensor != null) {
                 sensorManager.unregisterListener(MediaController.this, linearSensor);
@@ -2539,6 +2545,12 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 FileLoader.getInstance(playingMessageObject.currentAccount).cancelLoadFile(playingMessageObject.getDocument());
             }
             MessageObject lastFile = playingMessageObject;
+            // If we were routing audio through the earpiece, reset the Activity volume stream now.
+            // startAudioAgain() posts audioRouteChanged only when playback starts, never on stop.
+            if (useFrontSpeaker) {
+                NotificationCenter.getInstance(lastFile.currentAccount)
+                        .postNotificationName(NotificationCenter.audioRouteChanged, false);
+            }
             if (notify) {
                 playingMessageObject.resetPlayingProgress();
                 NotificationCenter.getInstance(lastFile.currentAccount).postNotificationName(NotificationCenter.messagePlayingProgressDidChanged, playingMessageObject.getId(), 0);

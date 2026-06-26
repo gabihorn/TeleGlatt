@@ -18,6 +18,8 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.LayoutHelper;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -97,13 +99,26 @@ public class AdsBannerView extends FrameLayout {
     private void loadImage(String relativeUrl) {
         final String fullUrl = relativeUrl.startsWith("http") ? relativeUrl : IMAGE_BASE + relativeUrl;
 
-        // Cache hit → show immediately, no flash
+        // 1. Memory cache hit → instant, no flash
         Bitmap cached = imageCache.get(fullUrl);
         if (cached != null) {
             imageView.setImageBitmap(cached);
             return;
         }
 
+        // 2. Disk cache hit (< 24h) → load from disk, avoid network round-trip
+        File diskFile = getDiskCacheFile(fullUrl);
+        if (diskFile != null && diskFile.exists()
+                && System.currentTimeMillis() - diskFile.lastModified() < 24 * 60 * 60 * 1000L) {
+            Bitmap disk = BitmapFactory.decodeFile(diskFile.getAbsolutePath());
+            if (disk != null) {
+                imageCache.put(fullUrl, disk);
+                imageView.setImageBitmap(disk);
+                return;
+            }
+        }
+
+        // 3. Network download → save to memory + disk
         imageView.setImageBitmap(null);
         new Thread(() -> {
             try {
@@ -116,6 +131,7 @@ public class AdsBannerView extends FrameLayout {
                 in.close();
                 if (bmp != null) {
                     imageCache.put(fullUrl, bmp);
+                    saveToDisk(diskFile, bmp);
                     new Handler(Looper.getMainLooper()).post(() -> {
                         if (currentAd != null && currentAd.bannerImageUrl() != null
                                 && fullUrl.contains(currentAd.bannerImageUrl())) {
@@ -125,6 +141,23 @@ public class AdsBannerView extends FrameLayout {
                 }
             } catch (Exception ignored) {}
         }).start();
+    }
+
+    private File getDiskCacheFile(String url) {
+        try {
+            File dir = new File(getContext().getCacheDir(), "askan_ads");
+            if (!dir.exists()) dir.mkdirs();
+            return new File(dir, Integer.toHexString(url.hashCode()) + ".jpg");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void saveToDisk(File file, Bitmap bmp) {
+        if (file == null) return;
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+            bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos);
+        } catch (Exception ignored) {}
     }
 
     @Override
