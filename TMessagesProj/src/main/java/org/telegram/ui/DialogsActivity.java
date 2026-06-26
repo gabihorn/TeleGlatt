@@ -6903,7 +6903,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         // Refresh Askan permissions — at top to avoid any early-return misses below
         if (!onlySelect && folderId == 0) {
             long now = System.currentTimeMillis();
-            if (now - org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch > 30_000) {
+            if (now - org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch > 5 * 60 * 1000L) {
                 org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch = now;
                 TLRPC.User me = getUserConfig().getCurrentUser();
                 if (me != null && me.phone != null && !me.phone.isEmpty()) {
