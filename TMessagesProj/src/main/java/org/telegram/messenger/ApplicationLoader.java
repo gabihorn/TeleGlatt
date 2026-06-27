@@ -319,6 +319,12 @@ public class ApplicationLoader extends Application {
             applicationContext = getApplicationContext();
         }
 
+        // Crashlytics — catch unhandled crashes and report to Firebase
+        try {
+            com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance()
+                .setCrashlyticsCollectionEnabled(!BuildVars.DEBUG_VERSION);
+        } catch (Exception ignored) {}
+
         NativeLoader.initNativeLibs(ApplicationLoader.applicationContext);
 
         try {

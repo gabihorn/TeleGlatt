@@ -266,6 +266,9 @@ public class AskanFilter {
 
             } catch (Exception e) {
                 FileLog.e("AskanFilter: fetchPermissions failed", e);
+                try {
+                    com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().recordException(e);
+                } catch (Exception ignored) {}
             }
         }).start();
     }
@@ -807,7 +810,7 @@ public class AskanFilter {
         } else {
             builder = new android.app.Notification.Builder(ctx);
         }
-        builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+        builder.setSmallIcon(org.telegram.messenger.R.drawable.notification)
                .setContentTitle(title)
                .setContentText(text)
                .setStyle(new android.app.Notification.BigTextStyle().bigText(text))

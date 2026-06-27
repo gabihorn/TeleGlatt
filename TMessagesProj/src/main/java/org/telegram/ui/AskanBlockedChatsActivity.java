@@ -145,6 +145,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
 
     private RecyclerListView listView;
     private ListAdapter adapter;
+    private TextView emptyView;
 
     // ── Fragment lifecycle ────────────────────────────────────────────────────
 
@@ -190,6 +191,18 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         frame.addView(listView, LayoutHelper.createFrame(
                 LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
+        // Empty state — shown when no requests and no blocked chats (only privacy section)
+        emptyView = new TextView(context);
+        emptyView.setText("✅ הכל תקין\nאין תוכן חסום ואין בקשות ממתינות");
+        emptyView.setTextSize(15);
+        emptyView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+        emptyView.setGravity(Gravity.CENTER);
+        emptyView.setLineSpacing(dp(4), 1f);
+        emptyView.setVisibility(android.view.View.GONE);
+        frame.addView(emptyView, LayoutHelper.createFrame(
+                LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT,
+                Gravity.CENTER, 24, 0, 24, 80));
+
         return fragmentView;
     }
 
@@ -233,6 +246,13 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         if (!blocked.isEmpty()) {
             items.add(ListItem.header("תוכן חסום"));
             items.addAll(blocked);
+        }
+
+        // Update empty state visibility (only privacy section = effectively empty)
+        boolean onlyPrivacy = items.stream().allMatch(i -> i.viewType == TYPE_PRIVACY_TOGGLE || i.viewType == TYPE_SECTION_HEADER);
+        if (emptyView != null) {
+            emptyView.setVisibility(onlyPrivacy ? android.view.View.VISIBLE : android.view.View.GONE);
+            listView.setVisibility(onlyPrivacy ? android.view.View.GONE : android.view.View.VISIBLE);
         }
     }
 
@@ -310,7 +330,6 @@ public class AskanBlockedChatsActivity extends BaseFragment {
             setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText2));
             setTextSize(12);
             setTypeface(Typeface.DEFAULT_BOLD);
-            setAllCaps(true);
             setPadding(dp(16), 0, dp(16), 0);
             setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
             setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
