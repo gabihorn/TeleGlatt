@@ -13525,6 +13525,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             // Askan: blocked chats screen + links
             io.add(R.drawable.msg_block, "תוכן חסום", () ->
                     presentFragment(new AskanBlockedChatsActivity()));
+            io.add(R.drawable.msg_help, "שאלות נפוצות", () ->
+                    presentFragment(new AskanFaqActivity()));
             io.add(R.drawable.msg_channel, "ערוץ העדכונים", () ->
                     Browser.openUrl(getContext(), "https://t.me/TeleGlatt"));
             io.add(R.drawable.msg_link, "אתר עסקן", () ->
