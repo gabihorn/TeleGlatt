@@ -5,7 +5,11 @@ import static org.telegram.messenger.AndroidUtilities.dp;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ImageDecoder;
+import android.graphics.drawable.AnimatedImageDrawable;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -29,14 +33,6 @@ import java.net.URL;
  * Click handled in DialogsActivity.onItemClick() — no setOnClickListener here.
  */
 public class AdsBannerView extends FrameLayout {
-
-    private static final android.util.LruCache<String, Bitmap> imageCache;
-    static {
-        int maxKb = (int) (Runtime.getRuntime().maxMemory() / 1024 / 8);
-        imageCache = new android.util.LruCache<String, Bitmap>(maxKb) {
-            @Override protected int sizeOf(String key, Bitmap v) { return v.getByteCount() / 1024; }
-        };
-    }
 
     private static final String IMAGE_BASE = "https://api.askansmart.com";
     private static final int HEIGHT_DP = 56;
@@ -96,68 +92,74 @@ public class AdsBannerView extends FrameLayout {
         loadImage(bannerUrl);
     }
 
+    /** Returns the ad currently bound to this banner — used by the click handler so
+     *  clicks always target the displayed ad (correct even while ads rotate). */
+    public AskanAdsManager.Ad getBoundAd() {
+        return currentAd;
+    }
+
     private void loadImage(String relativeUrl) {
         final String fullUrl = relativeUrl.startsWith("http") ? relativeUrl : IMAGE_BASE + relativeUrl;
 
-        // 1. Memory cache hit → instant, no flash
-        Bitmap cached = imageCache.get(fullUrl);
-        if (cached != null) {
-            imageView.setImageBitmap(cached);
-            return;
-        }
-
-        // 2. Disk cache hit (< 24h) → load from disk, avoid network round-trip
+        // Disk cache hit (< 24h) → decode from disk, no network round-trip.
+        // Raw bytes are stored (not re-encoded) so animated GIF/WebP survives.
         File diskFile = getDiskCacheFile(fullUrl);
         if (diskFile != null && diskFile.exists()
                 && System.currentTimeMillis() - diskFile.lastModified() < 24 * 60 * 60 * 1000L) {
-            Bitmap disk = BitmapFactory.decodeFile(diskFile.getAbsolutePath());
-            if (disk != null) {
-                imageCache.put(fullUrl, disk);
-                imageView.setImageBitmap(disk);
-                return;
-            }
+            showFromFile(diskFile);
+            return;
         }
 
-        // 3. Network download → save to memory + disk
-        imageView.setImageBitmap(null);
+        imageView.setImageDrawable(null);
         new Thread(() -> {
             try {
                 URL url = new URL(fullUrl);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setConnectTimeout(6000);
                 conn.setReadTimeout(6000);
-                InputStream in = conn.getInputStream();
-                Bitmap bmp = BitmapFactory.decodeStream(in);
-                in.close();
-                if (bmp != null) {
-                    imageCache.put(fullUrl, bmp);
-                    saveToDisk(diskFile, bmp);
-                    new Handler(Looper.getMainLooper()).post(() -> {
-                        if (currentAd != null && currentAd.bannerImageUrl() != null
-                                && fullUrl.contains(currentAd.bannerImageUrl())) {
-                            imageView.setImageBitmap(bmp);
-                        }
-                    });
+                final File target = diskFile;
+                try (InputStream in = conn.getInputStream();
+                     FileOutputStream out = new FileOutputStream(target)) {
+                    byte[] buf = new byte[16_384];
+                    int n;
+                    while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
                 }
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    if (currentAd != null && currentAd.bannerImageUrl() != null
+                            && fullUrl.contains(currentAd.bannerImageUrl())) {
+                        showFromFile(target);
+                    }
+                });
             } catch (Exception ignored) {}
         }).start();
+    }
+
+    /** Decodes a cached file. Animated GIF/WebP play on API 28+; static fallback below. */
+    private void showFromFile(File file) {
+        if (file == null || !file.exists()) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                Drawable d = ImageDecoder.decodeDrawable(ImageDecoder.createSource(file));
+                imageView.setImageDrawable(d);
+                if (d instanceof AnimatedImageDrawable) {
+                    ((AnimatedImageDrawable) d).setRepeatCount(AnimatedImageDrawable.REPEAT_INFINITE);
+                    ((AnimatedImageDrawable) d).start();
+                }
+                return;
+            } catch (Exception ignored) { /* fall through to static decode */ }
+        }
+        Bitmap bmp = BitmapFactory.decodeFile(file.getAbsolutePath());
+        if (bmp != null) imageView.setImageBitmap(bmp);
     }
 
     private File getDiskCacheFile(String url) {
         try {
             File dir = new File(getContext().getCacheDir(), "askan_ads");
             if (!dir.exists()) dir.mkdirs();
-            return new File(dir, Integer.toHexString(url.hashCode()) + ".jpg");
+            return new File(dir, Integer.toHexString(url.hashCode()) + ".img");
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private void saveToDisk(File file, Bitmap bmp) {
-        if (file == null) return;
-        try (FileOutputStream fos = new FileOutputStream(file)) {
-            bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos);
-        } catch (Exception ignored) {}
     }
 
     @Override

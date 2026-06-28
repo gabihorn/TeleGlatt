@@ -9195,33 +9195,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         return pipActivityController;
     }
 
-    // Askan: show block dialog when a channel/user link is blocked at the LaunchActivity level
+    // Askan: show block sheet when a channel/user link is blocked at the LaunchActivity level.
+    // Delegates to the shared styled sheet so design + wording match ChatActivity everywhere.
     private void showAskanLinkBlockDialog(TLRPC.Chat chat, TLRPC.User user, int account) {
-        String name = chat != null ? chat.title
-                : (user != null && user.first_name != null ? user.first_name : "");
-        boolean isBot = user != null && user.bot;
-        String subject = isBot ? "בוט"
-                : (chat != null && org.telegram.messenger.ChatObject.isChannelAndNotMegaGroup(chat) ? "ערוץ" : "קבוצה");
-
-        final String identifier;
-        if (chat != null) {
-            identifier = (chat.username != null && !chat.username.isEmpty())
-                    ? chat.username : String.valueOf(chat.id);
-        } else if (user != null) {
-            identifier = (user.username != null && !user.username.isEmpty())
-                    ? user.username : String.valueOf(user.id);
-        } else {
-            identifier = "";
-        }
-        final String chatName = name;
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle(subject + " חסום");
-        builder.setMessage(subject + " זה אינו מאושר לשימוש באפליקציה.\nניתן לשלוח בקשת גישה למנהל.");
-        builder.setPositiveButton("בקש גישה", (dialog, which) ->
-                AskanUiHelper.showAccessRequestNoteDialog(this, account, identifier, chatName, subject, null));
-        builder.setNegativeButton("סגור", null);
-        builder.show();
+        AskanUiHelper.showBlockedSheet(this, account, chat, user);
     }
 
     private int reasonsToHideMainContent = 0;

@@ -10,6 +10,7 @@ import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.ui.ActionBar.BaseFragment;
+import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.LayoutHelper;
 
 /**
@@ -23,19 +24,21 @@ public class UpdateBannerView extends FrameLayout {
         final String _minVersion = minVersion != null ? minVersion : "";
         final String _updateUrl  = updateUrl  != null ? updateUrl  : "";
 
+        int orange = Theme.getColor(Theme.key_color_orange);
+
         // Orange left accent bar
         View accent = new View(context);
-        accent.setBackground(new ColorDrawable(0xFFF97316));
+        accent.setBackground(new ColorDrawable(orange));
         addView(accent, LayoutHelper.createFrame(4, LayoutHelper.MATCH_PARENT, Gravity.START | Gravity.TOP));
 
-        // Background
-        setBackgroundColor(0xFFFFF7ED);
+        // Background — soft orange tint, blends in both light and dark
+        setBackgroundColor((orange & 0x00FFFFFF) | 0x1A000000);
 
         // Text block
         TextView title = new TextView(context);
         title.setText("יש גרסה חדשה (" + _minVersion + ")");
         title.setTextSize(13);
-        title.setTextColor(0xFFC2410C);
+        title.setTextColor(orange);
         title.setTypeface(AndroidUtilities.bold());
         addView(title, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END, 0, 10, 12, 0));
@@ -43,7 +46,7 @@ public class UpdateBannerView extends FrameLayout {
         TextView sub = new TextView(context);
         sub.setText("הגרסה שלך ישנה — מומלץ לעדכן");
         sub.setTextSize(11);
-        sub.setTextColor(0xFF78350F);
+        sub.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
         addView(sub, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END, 0, 28, 12, 0));
 
@@ -51,7 +54,8 @@ public class UpdateBannerView extends FrameLayout {
         TextView updateBtn = new TextView(context);
         updateBtn.setText("עדכן עכשיו");
         updateBtn.setTextSize(11);
-        updateBtn.setTextColor(0xFF2563EB);
+        updateBtn.setTextColor(Theme.getColor(Theme.key_featuredStickers_addButton));
+        updateBtn.setTypeface(AndroidUtilities.bold());
         updateBtn.setPaintFlags(updateBtn.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
         updateBtn.setClickable(true);
         updateBtn.setOnClickListener(v -> {
@@ -69,7 +73,7 @@ public class UpdateBannerView extends FrameLayout {
         TextView close = new TextView(context);
         close.setText("×");
         close.setTextSize(20);
-        close.setTextColor(0xFF94A3B8);
+        close.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
         close.setClickable(true);
         close.setOnClickListener(v -> setVisibility(GONE));
         addView(close, LayoutHelper.createFrame(32, 32, Gravity.TOP | Gravity.START, 8, 6, 0, 0));

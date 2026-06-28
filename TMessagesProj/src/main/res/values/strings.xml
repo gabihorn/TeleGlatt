@@ -2475,7 +2475,7 @@
     <string name="TelegramFaqUrl">https://telegram.org/faq</string>
     <string name="PrivacyPolicy">Privacy Policy</string>
     <string name="TermsOfService">Terms of Service</string>
-    <string name="TermsOfServiceLogin">By signing up,\nyou agree to the *Terms of Service*.</string>
+    <string name="TermsOfServiceLogin">בהתחברות לאפליקציה אתה מסכים\nל*תנאי השימוש* של TeleGlatt.</string>
     <string name="PrivacyPolicyUrl">https://telegram.org/privacy</string>
     <string name="TermsOfServiceUrl">https://telegram.org/tos</string>
     <string name="WebAppDisclaimerUrl">https://telegram.org/tos/mini-apps</string>
@@ -4168,18 +4168,18 @@
     <string name="ViewMessage">Open Message</string>
     <!--Intro view-->
     <string name="Page1Title">TeleGlatt</string>
-    <string name="Page2Title">Fast</string>
-    <string name="Page3Title">Free</string>
-    <string name="Page4Title">Secure</string>
-    <string name="Page5Title">Powerful</string>
-    <string name="Page6Title">Cloud-Based</string>
-    <string name="Page1Message">The world\'s **fastest** messaging app.\nIt is **free** and **secure**.</string>
-    <string name="Page2Message">**Telegram** delivers messages faster than\nany other application.</string>
-    <string name="Page3Message">**Telegram** provides free unlimited cloud storage for chats and media.</string>
-    <string name="Page4Message">**Telegram** keeps your messages safe\nfrom hacker attacks.</string>
-    <string name="Page5Message">**Telegram** has no limits on\nthe size of your media and chats.</string>
-    <string name="Page6Message">**Telegram** lets you access your messages\nfrom multiple devices.</string>
-    <string name="StartMessaging">Start Messaging</string>
+    <string name="Page2Title">מהיר ואמין</string>
+    <string name="Page3Title">פרטיות מלאה</string>
+    <string name="Page4Title">תוכן מסונן</string>
+    <string name="Page5Title">ניהול קהילה</string>
+    <string name="Page6Title">תמיד איתך</string>
+    <string name="Page1Message">טלגרם מסונן. תקשורת בטוחה.</string>
+    <string name="Page2Message">**TeleGlatt** מספקת מהירות העברת הודעות\nמהטובות בעולם — ללא פשרות.</string>
+    <string name="Page3Message">**השיחות שלך שמורות** אצלך בלבד.\nאנחנו לא קוראים, לא מוכרים, לא שומרים.</string>
+    <string name="Page4Message">**ערוצים וקבוצות** עם תוכן בעייתי\nחסומים אוטומטית עבורך.</string>
+    <string name="Page5Message">**מנהלי הקהילה** שולטים מה מותר ומה אסור.\nבקש גישה לערוץ ספציפי בקלות.</string>
+    <string name="Page6Message">**כל ההיסטוריה שלך** זמינה בכל מכשיר,\nבכל זמן — מבוסס ענן.</string>
+    <string name="StartMessaging">כניסה לאפליקציה</string>
     <!-- VoIP -->
     <string name="AccountSettings">Account Settings</string>
     <string name="VoipUseLessData">Use less data for calls</string>

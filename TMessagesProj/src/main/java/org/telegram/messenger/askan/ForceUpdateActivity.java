@@ -206,7 +206,7 @@ public class ForceUpdateActivity extends Activity {
 
     private void buildUi(String minVersion) {
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(0xFF1E293B);
+        root.setBackgroundColor(0xFF0D0D14);
         setContentView(root);
 
         // Warning icon
@@ -277,7 +277,7 @@ public class ForceUpdateActivity extends Activity {
         // Update button
         updateBtn = new FrameLayout(this);
         GradientDrawable btnBg = new GradientDrawable();
-        btnBg.setColor(0xFF2563EB);
+        btnBg.setColor(0xFF1A1A6E);
         btnBg.setCornerRadius(AndroidUtilities.dp(12));
         updateBtn.setBackground(btnBg);
         updateBtn.setPadding(0, AndroidUtilities.dp(16), 0, AndroidUtilities.dp(16));
@@ -321,7 +321,7 @@ public class ForceUpdateActivity extends Activity {
         } else {
             btnLabel.setText("נסה שוב");
             updateBtn.setEnabled(true);
-            ((GradientDrawable) updateBtn.getBackground()).setColor(0xFF2563EB);
+            ((GradientDrawable) updateBtn.getBackground()).setColor(0xFF1A1A6E);
         }
     }
 
@@ -333,7 +333,7 @@ public class ForceUpdateActivity extends Activity {
         errorText.setVisibility(View.VISIBLE);
         btnLabel.setText("עדכן שוב");
         updateBtn.setEnabled(true);
-        ((GradientDrawable) updateBtn.getBackground()).setColor(0xFF2563EB);
+        ((GradientDrawable) updateBtn.getBackground()).setColor(0xFF1A1A6E);
         downloading = false;
     }
 
@@ -345,7 +345,7 @@ public class ForceUpdateActivity extends Activity {
         errorText.setVisibility(View.VISIBLE);
         btnLabel.setText("עדכן שוב");
         updateBtn.setEnabled(true);
-        ((GradientDrawable) updateBtn.getBackground()).setColor(0xFF2563EB);
+        ((GradientDrawable) updateBtn.getBackground()).setColor(0xFF1A1A6E);
         downloading = false;
     }
 

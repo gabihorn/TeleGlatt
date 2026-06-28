@@ -305,6 +305,7 @@ public class AskanFilter {
                 }
 
                 JSONObject body = new JSONObject();
+                body.put("phone", phone);
                 body.put("chat_username", chatUsername);
                 body.put("chat_name", chatName != null ? chatName : "");
                 body.put("note", note != null ? note : "");
@@ -354,7 +355,7 @@ public class AskanFilter {
             if (allowedArr != null) {
                 for (int i = 0; i < allowedArr.length(); i++) {
                     String chatId = allowedArr.getJSONObject(i).optString("chat_id", "");
-                    if (!chatId.isEmpty()) newGlobal.add(chatId);
+                    if (!chatId.isEmpty()) newGlobal.add(norm(chatId));
                 }
             }
 
@@ -373,7 +374,7 @@ public class AskanFilter {
             if (blockedArr != null) {
                 for (int i = 0; i < blockedArr.length(); i++) {
                     String chatId = blockedArr.optString(i, "");
-                    if (!chatId.isEmpty()) newBlockedChats.add(chatId);
+                    if (!chatId.isEmpty()) newBlockedChats.add(norm(chatId));
                 }
             }
 
@@ -448,24 +449,26 @@ public class AskanFilter {
                 maxMegagroupSize = prefs.getInt("max_megagroup_size", 250);
                 contentFilterEnabled = prefs.getBoolean("content_filter_enabled", false);
 
+                // Normalize on load so case-insensitive matching holds even for
+                // pre-fix cached data (before the first fresh fetchPermissions).
                 Set<String> g = prefs.getStringSet("global_allow", null);
-                globalAllow.clear(); if (g != null) globalAllow.addAll(g);
+                globalAllow.clear(); if (g != null) for (String e : g) globalAllow.add(norm(e));
 
                 Set<String> u = prefs.getStringSet("user_allow", null);
-                userAllow.clear(); if (u != null) userAllow.addAll(u);
+                userAllow.clear(); if (u != null) for (String e : u) userAllow.add(norm(e));
 
                 Set<String> w = prefs.getStringSet("blocked_words", null);
                 blockedWords.clear(); if (w != null) blockedWords.addAll(w);
 
                 Set<String> bc = prefs.getStringSet("blocked_chats", null);
-                blockedChats.clear(); if (bc != null) blockedChats.addAll(bc);
+                blockedChats.clear(); if (bc != null) for (String e : bc) blockedChats.add(norm(e));
 
                 Set<String> idMapSet = prefs.getStringSet("id_username_map", null);
                 usernameById.clear();
                 if (idMapSet != null) {
                     for (String entry : idMapSet) {
                         int sep = entry.indexOf('|');
-                        if (sep > 0) usernameById.put(entry.substring(0, sep), entry.substring(sep + 1));
+                        if (sep > 0) usernameById.put(entry.substring(0, sep), norm(entry.substring(sep + 1)));
                     }
                 }
             }
@@ -501,7 +504,8 @@ public class AskanFilter {
 
     public synchronized boolean isChannelAllowed(String chatId) {
         if (chatId == null) return false;
-        return globalAllow.contains(chatId) || userAllow.contains(chatId);
+        String c = norm(chatId);
+        return globalAllow.contains(c) || userAllow.contains(c);
     }
 
     /**
@@ -511,7 +515,8 @@ public class AskanFilter {
      */
     public synchronized boolean isExplicitlyAllowed(String id, String username) {
         if (globalAllow.contains(id) || userAllow.contains(id)) return true;
-        return username != null && (globalAllow.contains(username) || userAllow.contains(username));
+        String u = norm(username);
+        return u != null && (globalAllow.contains(u) || userAllow.contains(u));
     }
 
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
@@ -626,12 +631,16 @@ public class AskanFilter {
                     return;
                 }
 
-                HttpResult r = getWithToken(SERVER_URL + "/api/requests/mine", token);
+                // Route requires phone (and telegram_id) as query params — without them it returns 400.
+                String mineUrl = SERVER_URL + "/api/requests/mine?phone="
+                        + java.net.URLEncoder.encode(phone, "UTF-8")
+                        + "&telegram_id=" + telegramId;
+                HttpResult r = getWithToken(mineUrl, token);
                 if (r.code == 401) {
                     clearToken();
                     token = issueNewToken(phone, telegramId);
                     r = (token != null)
-                            ? getWithToken(SERVER_URL + "/api/requests/mine", token)
+                            ? getWithToken(mineUrl, token)
                             : new HttpResult(401, "");
                 }
 
@@ -771,21 +780,40 @@ public class AskanFilter {
                 String key = "req_" + req.id;
                 String savedStatus = prefs.getString(key, "pending");
                 if ("pending".equals(savedStatus) && !"pending".equals(req.status)) {
-                    String title = "TeleGlatt — בקשת גישה";
+                    String title;
                     String text;
                     String tapUrl = null;
-                    if ("approved".equals(req.status)) {
-                        String target = "access".equals(req.kind)
-                                ? ("@" + req.chatUsername)
-                                : ("privacy".equals(req.kind) ? "פרטיות" : req.chatUsername);
-                        text = "✅ הבקשה שלך ל-" + target + " אושרה!";
-                        if ("access".equals(req.kind) && req.chatUsername != null && !req.chatUsername.isEmpty()) {
-                            tapUrl = "https://t.me/" + req.chatUsername;
+                    if ("privacy".equals(req.kind)) {
+                        String target = "profile_photos".equals(req.privacyTarget) ? "תמונות פרופיל" : "סטוריז";
+                        if ("approved".equals(req.status)) {
+                            title = "בקשת " + target + " אושרה";
+                            text = "בקשתך לשחרור " + target + " אושרה בהצלחה.";
+                        } else {
+                            title = "בקשת " + target + " לא אושרה";
+                            text = "לאחר בדיקה, הבקשה לשחרור " + target + " לא אושרה.";
                         }
                     } else {
-                        text = "❌ הבקשה שלך נדחתה";
+                        String subject = prefs.getString("subj_" + req.chatUsername, "ערוץ");
+                        if ("approved".equals(req.status)) {
+                            title = "גישה ל" + subject + " אושרה";
+                            text = "בקשתך נבדקה ואושרה בהצלחה. כעת ניתן להיכנס ולצפות בתוכן ה" + subject + ".";
+                            if (req.chatUsername != null && !req.chatUsername.isEmpty()) {
+                                tapUrl = "https://t.me/" + req.chatUsername;
+                                // Unblock immediately in local cache so the channel opens without waiting for next fetchPermissions
+                                synchronized (AskanFilter.this) {
+                                    userAllow.add(req.chatUsername);
+                                }
+                            }
+                        } else {
+                            title = "הגישה ל" + subject + " לא אושרה";
+                            text = "לאחר בדיקה, נמצא כי תוכן ה" + subject + " אינו תואם את מדיניות הסינון של TeleGlatt.";
+                        }
                     }
                     postLocalNotification(req.id, title, text, tapUrl);
+                }
+                // Clear local "pending" flag once the request is no longer pending
+                if (!"pending".equals(req.status) && req.chatUsername != null && !req.chatUsername.isEmpty()) {
+                    editor.remove("pending_" + req.chatUsername);
                 }
                 editor.putString(key, req.status);
             }
@@ -800,7 +828,7 @@ public class AskanFilter {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel ch = new NotificationChannel(
-                    NOTIF_CHANNEL_ASKAN, "עדכוני בקשות", NotificationManager.IMPORTANCE_DEFAULT);
+                    NOTIF_CHANNEL_ASKAN, "TeleGlatt — עדכונים", NotificationManager.IMPORTANCE_DEFAULT);
             nm.createNotificationChannel(ch);
         }
 
@@ -924,6 +952,17 @@ public class AskanFilter {
         }).start();
     }
 
+    // ─── Username/id normalization ────────────────────────────────────────────
+    // Telegram usernames are case-insensitive (@MyChannel == @mychannel). The server
+    // stores allow/block usernames lowercased (+ @-stripped); the app must match the
+    // same way or approved channels stay blocked. Numeric ids are unaffected by this.
+    private static String norm(String s) {
+        if (s == null) return null;
+        s = s.trim();
+        if (s.startsWith("@")) s = s.substring(1);
+        return s.toLowerCase();
+    }
+
     // ─── Central block checks ─────────────────────────────────────────────────
 
     /**
@@ -940,7 +979,7 @@ public class AskanFilter {
 
         // Rule 0: explicit user-block — checked FIRST for ALL types, including basic groups
         String idStr = String.valueOf(chat.id);
-        String uname = chat.username;
+        String uname = norm(chat.username); // case-insensitive match (server stores lowercased)
         // Opportunistic: record id→username so FCM cold-start can resolve the allow-list by username
         recordIdMapping(idStr, uname);
         if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
@@ -1003,13 +1042,14 @@ public class AskanFilter {
     /** Used by swipe-between-channels to skip blocked channels without opening them. */
     public synchronized boolean isChannelBlockedForNav(String chatId, String username) {
         if (chatId != null && blockedChats.contains(chatId)) return true;
-        return username != null && blockedChats.contains(username);
+        String u = norm(username);
+        return u != null && blockedChats.contains(u);
     }
 
     public synchronized boolean isExplicitlyAllowedById(String id) {
         if (globalAllow.contains(id) || userAllow.contains(id)) return true;
         // Resolve numeric ID → username via the persisted mapping built by isChatBlocked
-        String username = usernameById.get(id);
+        String username = norm(usernameById.get(id));
         if (username != null) {
             return globalAllow.contains(username) || userAllow.contains(username);
         }
@@ -1020,7 +1060,7 @@ public class AskanFilter {
         if (user == null) return false;
 
         String idStr = String.valueOf(user.id);
-        String uname = user.username;
+        String uname = norm(user.username); // case-insensitive match (server stores lowercased)
         if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
             return true;
 

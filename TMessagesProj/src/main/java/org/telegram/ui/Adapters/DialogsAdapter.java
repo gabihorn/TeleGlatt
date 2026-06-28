@@ -1018,7 +1018,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
             case VIEW_TYPE_ADS_BANNER: {
                 org.telegram.messenger.askan.AdsBannerView bannerView =
                     (org.telegram.messenger.askan.AdsBannerView) holder.itemView;
-                bannerView.bind(org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentAd());
+                bannerView.bind(org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentBannerAd());
                 break;
             }
             case VIEW_TYPE_GRAY_SECTION: {
@@ -1502,7 +1502,7 @@ public class DialogsAdapter extends RecyclerListView.SelectionAdapter implements
 
         // Askan: inject ad banner as first item (main dialogs tab only, global scope)
         if (dialogsType == 0 && folderId == 0 && !hasHints &&
-                org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentAd() != null) {
+                org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentBannerAd() != null) {
             itemInternals.add(new ItemInternal(VIEW_TYPE_ADS_BANNER));
         }
 

@@ -73,7 +73,9 @@ public class AskanAdsManager {
 
     private static volatile AskanAdsManager instance;
 
-    private Ad currentAd = null;
+    private Ad currentAd = null;            // highest-priority ad (channels + fallback)
+    private final List<Ad> allAds = new ArrayList<>(); // every active ad from server
+    private int bannerIndex = 0;            // round-robin pointer for the banner
     private long lastFetchMs = 0;
     private boolean fetching = false;
     private final List<AdsListener> listeners = new ArrayList<>();
@@ -96,6 +98,28 @@ public class AskanAdsManager {
 
     public Ad getCurrentAd() {
         return currentAd;
+    }
+
+    /** Banner ads (placement banner/both), in priority order. */
+    private List<Ad> bannerAds() {
+        List<Ad> b = new ArrayList<>();
+        for (Ad a : allAds) if (a.showInBanner()) b.add(a);
+        if (b.isEmpty() && currentAd != null && currentAd.showInBanner()) b.add(currentAd);
+        return b;
+    }
+
+    /** The banner ad to display right now (stable until rotateBanner() is called). */
+    public synchronized Ad getCurrentBannerAd() {
+        List<Ad> b = bannerAds();
+        if (b.isEmpty()) return null;
+        if (bannerIndex >= b.size()) bannerIndex = 0;
+        return b.get(bannerIndex);
+    }
+
+    /** Advance to the next banner ad — call on each return to the main screen. */
+    public synchronized void rotateBanner() {
+        int n = bannerAds().size();
+        if (n > 1) bannerIndex = (bannerIndex + 1) % n;
     }
 
     public void addListener(AdsListener l) {
@@ -128,7 +152,7 @@ public class AskanAdsManager {
             String token = filter.getDeviceToken();
             if (token == null || token.isEmpty()) {
                 Log.d(TAG, "No device token — skipping ad fetch");
-                done(null, false); // not a real server response
+                doneError(); // not a real server response — keep cached ads
                 return;
             }
 
@@ -142,7 +166,7 @@ public class AskanAdsManager {
             int code = conn.getResponseCode();
             if (code != 200) {
                 Log.d(TAG, "GET /api/ads returned " + code);
-                done(null, false); // server error, keep cached ad
+                doneError(); // server error, keep cached ads
                 return;
             }
 
@@ -153,43 +177,65 @@ public class AskanAdsManager {
             reader.close();
 
             JSONArray arr = new JSONArray(sb.toString());
-            if (arr.length() == 0) {
-                done(null, true); // real "no ads" from server — clear cached
-                return;
+            List<Ad> parsed = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                parsed.add(new Ad(
+                    obj.getInt("id"),
+                    obj.optString("title", ""),
+                    obj.isNull("image_url")  ? null : obj.optString("image_url",  ""),
+                    obj.isNull("logo_url")   ? null : obj.optString("logo_url",   ""),
+                    obj.isNull("body_text")  ? null : obj.optString("body_text",  ""),
+                    obj.optString("target_url", ""),
+                    obj.optString("placement", "both")
+                ));
             }
-
-            // Take the first (highest priority) ad
-            JSONObject obj = arr.getJSONObject(0);
-            Ad ad = new Ad(
-                obj.getInt("id"),
-                obj.optString("title", ""),
-                obj.isNull("image_url")  ? null : obj.optString("image_url",  ""),
-                obj.isNull("logo_url")   ? null : obj.optString("logo_url",   ""),
-                obj.isNull("body_text")  ? null : obj.optString("body_text",  ""),
-                obj.optString("target_url", ""),
-                obj.optString("placement", "both")
-            );
-            Log.d(TAG, "Fetched ad id=" + ad.id + " title=" + ad.title);
-            done(ad, true);
+            Log.d(TAG, "Fetched " + parsed.size() + " ad(s)");
+            applyAds(parsed); // empty list = real "no ads" → clears
 
         } catch (Exception e) {
             Log.d(TAG, "Ad fetch failed (silent): " + e.getMessage());
-            done(null, false); // network error, keep cached ad
+            doneError(); // network error — keep whatever ads we already have
         }
     }
 
-    private void done(Ad ad, boolean persistUpdate) {
+    /** Resets the fetching flag without touching ads (used on network/token errors). */
+    private void doneError() {
+        mainHandler.post(() -> {
+            synchronized (AskanAdsManager.this) { fetching = false; }
+        });
+    }
+
+    private void applyAds(List<Ad> ads) {
         mainHandler.post(() -> {
             synchronized (AskanAdsManager.this) {
                 fetching = false;
                 lastFetchMs = System.currentTimeMillis();
-                if (persistUpdate) saveCachedAd(ad);
-                if (isDifferent(currentAd, ad)) {
-                    currentAd = ad;
-                    for (AdsListener l : new ArrayList<>(listeners)) l.onAdChanged(ad);
+                Ad newTop = ads.isEmpty() ? null : ads.get(0);
+                allAds.clear();
+                allAds.addAll(ads);
+                if (bannerIndex >= ads.size()) bannerIndex = 0;
+                saveCachedAds(ads);
+                if (isDifferent(currentAd, newTop)) {
+                    currentAd = newTop;
+                    for (AdsListener l : new ArrayList<>(listeners)) l.onAdChanged(newTop);
+                } else {
+                    currentAd = newTop;
                 }
             }
         });
+    }
+
+    private Ad adFromJson(JSONObject obj) throws Exception {
+        return new Ad(
+            obj.getInt("id"),
+            obj.optString("title", ""),
+            obj.isNull("image_url") ? null : obj.optString("image_url", ""),
+            obj.isNull("logo_url")  ? null : obj.optString("logo_url",  ""),
+            obj.isNull("body_text") ? null : obj.optString("body_text", ""),
+            obj.optString("target_url", ""),
+            obj.optString("placement", "both")
+        );
     }
 
     private void loadCachedAd() {
@@ -199,43 +245,47 @@ public class AskanAdsManager {
             SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             String json = prefs.getString(KEY_AD_JSON, null);
             if (json == null) return;
-            JSONObject obj = new JSONObject(json);
-            currentAd = new Ad(
-                obj.getInt("id"),
-                obj.optString("title", ""),
-                obj.isNull("image_url") ? null : obj.optString("image_url", ""),
-                obj.isNull("logo_url")  ? null : obj.optString("logo_url",  ""),
-                obj.isNull("body_text") ? null : obj.optString("body_text", ""),
-                obj.optString("target_url", ""),
-                obj.optString("placement", "both")
-            );
-            Log.d(TAG, "Loaded cached ad id=" + currentAd.id);
+            String trimmed = json.trim();
+            allAds.clear();
+            if (trimmed.startsWith("[")) {
+                JSONArray arr = new JSONArray(trimmed);
+                for (int i = 0; i < arr.length(); i++) allAds.add(adFromJson(arr.getJSONObject(i)));
+            } else {
+                // Backward-compat: old single-object cache
+                allAds.add(adFromJson(new JSONObject(trimmed)));
+            }
+            currentAd = allAds.isEmpty() ? null : allAds.get(0);
+            Log.d(TAG, "Loaded " + allAds.size() + " cached ad(s)");
         } catch (Exception e) {
             Log.d(TAG, "loadCachedAd failed: " + e.getMessage());
         }
     }
 
-    private void saveCachedAd(Ad ad) {
+    private void saveCachedAds(List<Ad> ads) {
         try {
             Context ctx = ApplicationLoader.applicationContext;
             if (ctx == null) return;
             SharedPreferences.Editor editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
-            if (ad == null) {
+            if (ads == null || ads.isEmpty()) {
                 editor.remove(KEY_AD_JSON);
             } else {
-                JSONObject obj = new JSONObject();
-                obj.put("id", ad.id);
-                obj.put("title", ad.title != null ? ad.title : "");
-                if (ad.imageUrl != null) obj.put("image_url", ad.imageUrl); else obj.put("image_url", JSONObject.NULL);
-                if (ad.logoUrl  != null) obj.put("logo_url",  ad.logoUrl);  else obj.put("logo_url",  JSONObject.NULL);
-                if (ad.bodyText != null) obj.put("body_text", ad.bodyText); else obj.put("body_text", JSONObject.NULL);
-                obj.put("target_url", ad.targetUrl != null ? ad.targetUrl : "");
-                obj.put("placement", ad.placement);
-                editor.putString(KEY_AD_JSON, obj.toString());
+                JSONArray arr = new JSONArray();
+                for (Ad ad : ads) {
+                    JSONObject obj = new JSONObject();
+                    obj.put("id", ad.id);
+                    obj.put("title", ad.title != null ? ad.title : "");
+                    if (ad.imageUrl != null) obj.put("image_url", ad.imageUrl); else obj.put("image_url", JSONObject.NULL);
+                    if (ad.logoUrl  != null) obj.put("logo_url",  ad.logoUrl);  else obj.put("logo_url",  JSONObject.NULL);
+                    if (ad.bodyText != null) obj.put("body_text", ad.bodyText); else obj.put("body_text", JSONObject.NULL);
+                    obj.put("target_url", ad.targetUrl != null ? ad.targetUrl : "");
+                    obj.put("placement", ad.placement);
+                    arr.put(obj);
+                }
+                editor.putString(KEY_AD_JSON, arr.toString());
             }
             editor.apply();
         } catch (Exception e) {
-            Log.d(TAG, "saveCachedAd failed: " + e.getMessage());
+            Log.d(TAG, "saveCachedAds failed: " + e.getMessage());
         }
     }
 

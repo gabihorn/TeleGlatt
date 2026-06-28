@@ -1360,6 +1360,14 @@ public class NotificationsController extends BaseController implements Notificat
     // Askan: returns true if the notification should be suppressed by content filtering
     private boolean isBlockedByAskan(long dialogId, MessageObject messageObject) {
         AskanFilter filter = AskanFilter.getInstance();
+
+        // Blocked-word in the message text — never leak a forbidden word in a notification preview.
+        // Applies to all dialog types (channel/group/DM). No-op unless content filter is enabled.
+        if (messageObject != null && messageObject.messageText != null
+                && filter.containsBlockedWord(messageObject.messageText.toString())) {
+            return true;
+        }
+
         if (DialogObject.isChatDialog(dialogId)) {
             long chatId = -dialogId;
             String idStr = String.valueOf(chatId);
@@ -1368,8 +1376,10 @@ public class NotificationsController extends BaseController implements Notificat
 
             TLRPC.Chat chat = getMessagesController().getChat(chatId);
             if (chat != null) {
-                // Normal path: TLRPC.Chat in memory → full check
-                return filter.isChatBlocked(chat, null);
+                // Normal path: TLRPC.Chat in memory → mirror the display-block logic
+                // (channel/megagroup rules + blocked word in the chat title).
+                return filter.isChatBlocked(chat, null)
+                        || filter.containsBlockedWordForChat(chat.title, idStr, chat.username);
             }
             // FCM cold-start: TLRPC.Chat not yet in cache.
             // Use peer_id to distinguish channel/megagroup from basic group.
@@ -1599,7 +1609,8 @@ public class NotificationsController extends BaseController implements Notificat
                         }
                         settingsCache.put(dialog_id, value);
                     }
-                    if (!value || dialog_id == openedDialogId && ApplicationLoader.isScreenOn) {
+                    if (!value || dialog_id == openedDialogId && ApplicationLoader.isScreenOn
+                            || isBlockedByAskan(messageObject.getDialogId(), messageObject)) {
                         continue;
                     }
                     if (sparseArray == null) {
@@ -1672,7 +1683,8 @@ public class NotificationsController extends BaseController implements Notificat
                         }
                         settingsCache.put(dialogId, value);
                     }
-                    if (!value || dialogId == openedDialogId && ApplicationLoader.isScreenOn) {
+                    if (!value || dialogId == openedDialogId && ApplicationLoader.isScreenOn
+                            || isBlockedByAskan(messageObject.getDialogId(), messageObject)) {
                         continue;
                     }
                     if (mid != 0) {

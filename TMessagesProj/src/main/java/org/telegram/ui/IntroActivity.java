@@ -132,32 +132,31 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
     public boolean onFragmentCreate() {
         MessagesController.getGlobalMainSettings().edit().putLong("intro_crashed_time", System.currentTimeMillis()).apply();
 
+        // Hardcoded branded strings — NOT via LocaleController, because Telegram's
+        // language packs override resource strings for non-Hebrew device languages,
+        // which would show Telegram's original intro instead of TeleGlatt's branding.
         titles = new CharSequence[]{
-                null,
-                LocaleController.getString(R.string.Page2Title),
-                LocaleController.getString(R.string.Page3Title),
-                LocaleController.getString(R.string.Page5Title),
-                LocaleController.getString(R.string.Page4Title),
-                LocaleController.getString(R.string.Page6Title)
+                "TeleGlatt",
+                "מהיר ואמין",
+                "פרטיות מלאה",
+                "ניהול קהילה",
+                "תוכן מסונן",
+                "תמיד איתך"
         };
         messages = new String[]{
-                LocaleController.getString(R.string.Page1Message),
-                LocaleController.getString(R.string.Page2Message),
-                LocaleController.getString(R.string.Page3Message),
-                LocaleController.getString(R.string.Page5Message),
-                LocaleController.getString(R.string.Page4Message),
-                LocaleController.getString(R.string.Page6Message)
+                "טלגרם מסונן. תקשורת בטוחה.",
+                "**TeleGlatt** מספקת מהירות העברת הודעות\nמהטובות בעולם — ללא פשרות.",
+                "**השיחות שלך שמורות** אצלך בלבד.\nאנחנו לא קוראים, לא מוכרים, לא שומרים.",
+                "**מנהלי הקהילה** שולטים מה מותר ומה אסור.\nבקש גישה לערוץ ספציפי בקלות.",
+                "**ערוצים וקבוצות** עם תוכן בעייתי\nחסומים אוטומטית עבורך.",
+                "**כל ההיסטוריה שלך** זמינה בכל מכשיר,\nבכל זמן — מבוסס ענן."
         };
         return true;
     }
 
     @Override
     public View createView(Context context) {
-        logoDrawable = context.getResources().getDrawable(R.drawable.telegram_logo).mutate();
-        logoDrawable.setBounds(0, dp(8.666f), dp(115), dp(35));
-        SpannableStringBuilder ssb = new SpannableStringBuilder(LocaleController.getString(R.string.Page1Title));
-        ssb.setSpan(new ImageSpan(logoDrawable), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        titles[0] = ssb;
+        titles[0] = "TeleGlatt";
 
 
         actionBar.setAddToContainer(false);
@@ -186,10 +185,12 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
                 bottomPages.layout(x, y, x + bottomPages.getMeasuredWidth(), y + bottomPages.getMeasuredHeight());
                 viewPager.layout(0, 0, viewPager.getMeasuredWidth(), viewPager.getMeasuredHeight());
 
-                y = oneFourth * 3 + (oneFourth - startMessagingButton.getMeasuredHeight()) / 2;
+                // Button positioned above disclaimer+terms (130dp from bottom)
+                y = (bottom - top) - dp(130) - startMessagingButton.getMeasuredHeight();
                 x = (getMeasuredWidth() - startMessagingButton.getMeasuredWidth()) / 2;
                 startMessagingButton.layout(x, y, x + startMessagingButton.getMeasuredWidth(), y + startMessagingButton.getMeasuredHeight());
-                y -= dp(30);
+                // "המשך בעברית" above the button
+                y -= dp(36);
                 x = (getMeasuredWidth() - switchLanguageTextView.getMeasuredWidth()) / 2;
                 switchLanguageTextView.layout(x, y - switchLanguageTextView.getMeasuredHeight(), x + switchLanguageTextView.getMeasuredWidth(), y);
 
@@ -248,6 +249,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         frameContainerView.addView(frameLayout2, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 0, 78, 0, 0));
 
         TextureView textureView = new TextureView(context);
+        textureView.setVisibility(View.INVISIBLE);
         frameLayout2.addView(textureView, LayoutHelper.createFrame(ICON_WIDTH_DP, ICON_HEIGHT_DP, Gravity.CENTER));
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
@@ -263,34 +265,30 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
                         if (eglThread != null && eglThread.isAlive() && eglThread.eglDisplay != null && eglThread.eglSurface != null) {
                             try {
                                 eglThread.egl10.eglSwapBuffers(eglThread.eglDisplay, eglThread.eglSurface);
-                            } catch (Exception ignored) {} // If display or surface already destroyed
+                            } catch (Exception ignored) {}
                         }
                     });
                     eglThread.postRunnable(eglThread.drawRunnable);
                 }
             }
-
             @Override
             public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, final int width, final int height) {
-                if (eglThread != null) {
-                    eglThread.setSurfaceTextureSize(width, height);
-                }
+                if (eglThread != null) eglThread.setSurfaceTextureSize(width, height);
             }
-
             @Override
             public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
-                if (eglThread != null) {
-                    eglThread.shutdown();
-                    eglThread = null;
-                }
+                if (eglThread != null) { eglThread.shutdown(); eglThread = null; }
                 return true;
             }
-
             @Override
-            public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {
-
-            }
+            public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {}
         });
+
+        // Askan: show app launcher icon on top of (invisible) OpenGL view
+        android.widget.ImageView appIconView = new android.widget.ImageView(context);
+        appIconView.setImageResource(R.mipmap.ic_launcher_round);
+        appIconView.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        frameLayout2.addView(appIconView, LayoutHelper.createFrame(ICON_HEIGHT_DP, ICON_HEIGHT_DP, Gravity.CENTER));
 
         viewPager = new ViewPager(context);
         viewPager.setAdapter(new IntroAdapter());
@@ -372,12 +370,12 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             }
         };
         ScaleStateListAnimator.apply(startMessagingButton, .02f, 1.2f);
-        startMessagingButton.setText(LocaleController.getString(R.string.StartMessaging));
+        startMessagingButton.setText("כניסה מאובטחת");
         startMessagingButton.setGravity(Gravity.CENTER);
         startMessagingButton.setTypeface(AndroidUtilities.bold());
         startMessagingButton.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15);
         startMessagingButton.setPadding(dp(34), 0, dp(34), 0);
-        frameContainerView.addView(startMessagingButton, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 48, Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM, 16, 0, 16, 76));
+        frameContainerView.addView(startMessagingButton, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 48, Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM, 16, 0, 16, 130));
         startMessagingButton.setOnClickListener(view -> {
             if (startPressed) {
                 return;
@@ -391,18 +389,26 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         bottomPages = new BottomPagesView(context, viewPager, 6);
         frameContainerView.addView(bottomPages, LayoutHelper.createFrame(66, 5, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, ICON_HEIGHT_DP + 200, 0, 0));
 
+        // Askan: terms of use text below the button
+        TextView termsView = new TextView(context);
+        termsView.setGravity(Gravity.CENTER);
+        termsView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 10);
+        termsView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+        termsView.setText("בלחיצה על כניסה, אני מאשר/ת את תנאי השימוש ומדיניות הפרטיות.");
+        frameContainerView.addView(termsView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 16, 0, 16, 62));
+
         // Askan: Telegram API disclosure — required by Telegram ToS
         TextView telegramDisclaimerView = new TextView(context);
         telegramDisclaimerView.setGravity(Gravity.CENTER);
-        telegramDisclaimerView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11);
+        telegramDisclaimerView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 10);
         telegramDisclaimerView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-        telegramDisclaimerView.setText("אפליקציה זו מבוססת על Telegram API\nומהווה חלק מהמערכת האקולוגית של Telegram.");
+        telegramDisclaimerView.setText("אפליקציית TeleGlatt מבוססת על תשתית ה-API של טלגרם ואינה קשורה לחברת Telegram Messenger Inc.\nהאפליקציה מספקת שיחות אישיות פתוחות ופרטיות, לצד סינון מוקפד ובקרה מלאה על ערוצים וקבוצות.");
         frameContainerView.addView(telegramDisclaimerView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 16, 0, 16, 4));
 
         switchLanguageTextView = new TextView(context);
         switchLanguageTextView.setGravity(Gravity.CENTER);
-        switchLanguageTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-        frameContainerView.addView(switchLanguageTextView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 30, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 38));
+        switchLanguageTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        frameContainerView.addView(switchLanguageTextView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 30, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 104));
         switchLanguageTextView.setOnClickListener(v -> {
             if (startPressed || localeInfo == null) {
                 return;
@@ -622,6 +628,15 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
 
             headerTextView.setText(titles[position]);
             messageTextView.setText(AndroidUtilities.replaceTags(messages[position]));
+
+            if (position == 0) {
+                TextView poweredByView = new TextView(container.getContext());
+                poweredByView.setText("Powered by Askan");
+                poweredByView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12);
+                poweredByView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+                poweredByView.setGravity(Gravity.CENTER);
+                frameLayout.addView(poweredByView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP | Gravity.LEFT, 16, 312, 16, 0));
+            }
 
             return frameLayout;
         }
@@ -981,7 +996,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
 
     private void updateColors(boolean fromTheme) {
         startMessagingButtonBackground.setColors(new int[]{getThemedColor(Theme.key_featuredStickers_addButton), getThemedColor(Theme.key_featuredStickers_addButton2)});
-        logoDrawable.setColorFilter(Theme.multAlpha(getThemedColor(Theme.key_actionBarDefaultTitle), 0.9f), PorterDuff.Mode.MULTIPLY);
+        if (logoDrawable != null) logoDrawable.setColorFilter(Theme.multAlpha(getThemedColor(Theme.key_actionBarDefaultTitle), 0.9f), PorterDuff.Mode.MULTIPLY);
         fragmentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
         switchLanguageTextView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
         startMessagingButton.setTextColor(Theme.getColor(Theme.key_featuredStickers_buttonText));

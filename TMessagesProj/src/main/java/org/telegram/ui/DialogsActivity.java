@@ -6912,6 +6912,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 }
             }
             checkAskanUpdateStatus();
+            // Rotate the banner ad on each return to the main screen (re-bound by notifyDataSetChanged below)
+            org.telegram.messenger.askan.AskanAdsManager.getInstance().rotateBanner();
         }
 
         if (dialogStoriesCell != null) {
@@ -7785,8 +7787,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             return;
         }
         if (view instanceof org.telegram.messenger.askan.AdsBannerView) {
+            // Use the ad bound to THIS banner (correct even while ads rotate)
             org.telegram.messenger.askan.AskanAdsManager.Ad ad =
-                org.telegram.messenger.askan.AskanAdsManager.getInstance().getCurrentAd();
+                ((org.telegram.messenger.askan.AdsBannerView) view).getBoundAd();
             if (ad != null) {
                 org.telegram.messenger.askan.AskanAdsManager.getInstance().sendClick(ad.id);
                 org.telegram.messenger.browser.Browser.openUrl(getParentActivity(), ad.targetUrl);
