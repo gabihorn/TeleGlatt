@@ -8650,8 +8650,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             popupLayout.setBackground(Theme.createRoundRectDrawable(AndroidUtilities.dp(12), Theme.getColor(Theme.key_dialogBackground)));
             confirmMessageView.setTextColor(Theme.getColor(Theme.key_dialogTextGray2));
             numberView.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
-            editTextView.setTextColor(Theme.getColor(Theme.key_changephoneinfo_image2));
-            confirmTextView.setTextColor(Theme.getColor(Theme.key_changephoneinfo_image2));
+            editTextView.setTextColor(Theme.getColor(Theme.key_dialogTextBlue2));
+            confirmTextView.setTextColor(Theme.getColor(Theme.key_dialogTextBlue2));
             fabButton.updateColors();
         }
 
