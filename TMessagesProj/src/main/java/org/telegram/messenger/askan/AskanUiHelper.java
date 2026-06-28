@@ -228,6 +228,8 @@ public class AskanUiHelper {
         noteInput.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
         noteInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         noteInput.setMaxLines(3);
+        noteInput.setFocusable(true);
+        noteInput.setFocusableInTouchMode(true);
         noteInput.setBackground(null);
         noteInput.setPadding(dp(14), dp(12), dp(14), dp(12));
         GradientDrawable fieldBg = new GradientDrawable();
@@ -273,7 +275,14 @@ public class AskanUiHelper {
         BottomSheet sheet = new BottomSheet.Builder(ctx, false)
                 .setCustomView(content)
                 .create();
+        sheet.setFocusable(true); // allow the sheet window to receive keyboard input
         sheet.show();
+
+        // Auto-focus the note field and pop the keyboard once the sheet is open
+        org.telegram.messenger.AndroidUtilities.runOnUIThread(() -> {
+            noteInput.requestFocus();
+            org.telegram.messenger.AndroidUtilities.showKeyboard(noteInput);
+        }, 150);
 
         cancelBtn.setOnClickListener(v -> sheet.dismiss());
         sendBtn.setOnClickListener(v -> {
