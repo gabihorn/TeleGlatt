@@ -222,6 +222,21 @@ public class StoriesController {
             TL_stories.PeerStories userStories = list.get(k);
             long dialogId = DialogObject.getPeerDialogId(userStories.peer);
             boolean removed = false;
+            // Askan: drop stories from blocked channels/groups/bots/users (no story bypass)
+            boolean askanBlocked;
+            if (dialogId < 0) {
+                TLRPC.Chat ac = MessagesController.getInstance(currentAccount).getChat(-dialogId);
+                askanBlocked = ac != null && org.telegram.messenger.askan.AskanFilter.getInstance()
+                        .isChatBlocked(ac, MessagesController.getInstance(currentAccount).getChatFull(-dialogId));
+            } else {
+                TLRPC.User au = MessagesController.getInstance(currentAccount).getUser(dialogId);
+                askanBlocked = au != null && org.telegram.messenger.askan.AskanFilter.getInstance().isUserBlocked(au);
+            }
+            if (askanBlocked) {
+                list.remove(k);
+                k--;
+                continue;
+            }
             if (dialogId > 0) {
                 TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(dialogId);
                 if (user != null && !isContactOrService(user)) {
@@ -251,6 +266,19 @@ public class StoriesController {
     public boolean hasStories(long dialogId) {
         if (dialogId == 0) {
             return false;
+        }
+        // Askan: blocked channels/groups/bots/users never show a story ring
+        if (dialogId < 0) {
+            TLRPC.Chat ac = MessagesController.getInstance(currentAccount).getChat(-dialogId);
+            if (ac != null && org.telegram.messenger.askan.AskanFilter.getInstance()
+                    .isChatBlocked(ac, MessagesController.getInstance(currentAccount).getChatFull(-dialogId))) {
+                return false;
+            }
+        } else {
+            TLRPC.User au = MessagesController.getInstance(currentAccount).getUser(dialogId);
+            if (au != null && org.telegram.messenger.askan.AskanFilter.getInstance().isUserBlocked(au)) {
+                return false;
+            }
         }
         if (hasUploadingStories(dialogId)) {
             return true;

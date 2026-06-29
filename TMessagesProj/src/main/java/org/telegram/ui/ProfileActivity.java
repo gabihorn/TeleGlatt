@@ -2078,6 +2078,31 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         userId = arguments.getLong("user_id", 0);
         chatId = arguments.getLong("chat_id", 0);
         topicId = arguments.getLong("topic_id", 0);
+
+        // Askan: block the profile (and its shared-media tab) of blocked channels/groups/bots —
+        // otherwise long-press → "show channel" → profile exposes content of a blocked chat.
+        {
+            final TLRPC.Chat askanChat = chatId != 0 ? getMessagesController().getChat(chatId) : null;
+            final TLRPC.User askanUser = userId != 0 ? getMessagesController().getUser(userId) : null;
+            boolean askanBlocked = false;
+            if (askanChat != null) {
+                askanBlocked = org.telegram.messenger.askan.AskanFilter.getInstance()
+                        .isChatBlocked(askanChat, getMessagesController().getChatFull(chatId));
+            } else if (askanUser != null) {
+                askanBlocked = org.telegram.messenger.askan.AskanFilter.getInstance().isUserBlocked(askanUser);
+            }
+            if (askanBlocked) {
+                AndroidUtilities.runOnUIThread(() -> {
+                    android.content.Context ctx = getParentActivity() != null
+                            ? getParentActivity() : AndroidUtilities.getActivity();
+                    if (ctx != null) {
+                        org.telegram.messenger.askan.AskanUiHelper.showBlockedSheet(
+                                ctx, currentAccount, askanChat, askanUser);
+                    }
+                });
+                return false;
+            }
+        }
         saved = arguments.getBoolean("saved", false);
         openSimilar = arguments.getBoolean("similar", false);
         isTopic = topicId != 0;
