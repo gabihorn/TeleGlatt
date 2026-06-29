@@ -63,10 +63,6 @@ public class AskanFilter {
     // Stored in SharedPreferences key "device_token".
     private volatile String deviceToken = null;
 
-    // Throttles the one-time device-verification prompt (server returns 428 when
-    // settings.require_device_verification is on). 0 = never prompted this session.
-    private volatile long lastVerifyPromptMs = 0;
-
     private AskanFilter() {}
 
     public static AskanFilter getInstance() {
@@ -120,29 +116,6 @@ public class AskanFilter {
             body.put("phone", phone);
             body.put("telegram_id", telegramId);
             HttpResult result = postJson(SERVER_URL + "/api/auth/device", body, null);
-
-            // 428 = device verification required (gated server-side). Open the bot
-            // deep link once so the user can confirm; a later acquireToken retry then
-            // succeeds. Throttled so it isn't reopened on every background call.
-            if (result.code == 428) {
-                try {
-                    String botUrl = new JSONObject(result.body).optString("bot_url", null);
-                    long now = System.currentTimeMillis();
-                    if (botUrl != null && now - lastVerifyPromptMs > 30000) {
-                        lastVerifyPromptMs = now;
-                        final String url = botUrl;
-                        AndroidUtilities.runOnUIThread(() -> {
-                            android.app.Activity act = AndroidUtilities.getActivity();
-                            if (act != null) {
-                                android.widget.Toast.makeText(act,
-                                        "אימות חד-פעמי: אשרו בבוט וחזרו לאפליקציה", android.widget.Toast.LENGTH_LONG).show();
-                                try { org.telegram.messenger.browser.Browser.openUrl(act, url); } catch (Exception ignored) {}
-                            }
-                        });
-                    }
-                } catch (Exception ignored) {}
-                return null;
-            }
 
             if (result.code != 200) {
                 FileLog.e("AskanFilter: issueNewToken returned " + result.code);
