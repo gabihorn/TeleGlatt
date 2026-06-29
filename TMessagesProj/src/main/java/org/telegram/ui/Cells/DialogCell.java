@@ -1071,6 +1071,15 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                     currentChat = messagesController.getChat(-dialog.id);
                 }
             }
+            // Askan: don't surface blocked channels/groups/bots in the archive preview row
+            if (currentChat != null && org.telegram.messenger.askan.AskanFilter.getInstance()
+                    .isChatBlocked(currentChat, messagesController.getChatFull(-dialog.id))) {
+                continue;
+            }
+            if (currentUser != null && org.telegram.messenger.askan.AskanFilter.getInstance()
+                    .isUserBlocked(currentUser)) {
+                continue;
+            }
             String title;
             if (currentChat != null) {
                 title = currentChat.title.replace('\n', ' ');
