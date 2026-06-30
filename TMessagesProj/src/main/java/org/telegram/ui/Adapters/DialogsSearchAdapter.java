@@ -1128,7 +1128,10 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
                 ConnectionsManager.getInstance(currentAccount).cancelRequest(sponsoredReqId, true);
                 sponsoredReqId = 0;
             }
-            if (query == null || query.length() < 4 || UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
+            // Askan: never fetch sponsored search peers (ads). The instance check is a
+            // non-constant always-true, mirroring the idiom used elsewhere in this file
+            // to skip the branch without a javac unreachable-code error.
+            if (query == null || query.length() < 4 || org.telegram.messenger.askan.AskanFilter.getInstance() != null) {
                 sponsoredQuery = null;
             } else {
                 final TLRPC.TL_contacts_getSponsoredPeers req = new TLRPC.TL_contacts_getSponsoredPeers();

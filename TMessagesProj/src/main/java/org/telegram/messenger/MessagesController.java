@@ -20877,6 +20877,13 @@ public class MessagesController extends BaseController implements NotificationCe
     }
 
     public SponsoredMessagesInfo getSponsoredMessages(long dialogId) {
+        // Askan: never serve Telegram's own sponsored messages (ads in channels/bots).
+        // Only our own Askan ads are allowed, and they run on a separate path
+        // (AskanAdsManager). This is the single choke point for all sponsored fetches.
+        return null;
+    }
+
+    public SponsoredMessagesInfo getSponsoredMessagesOriginal(long dialogId) {
         SponsoredMessagesInfo info = sponsoredMessages.get(dialogId);
         if (info != null && (info.loading || Math.abs(SystemClock.elapsedRealtime() - info.loadTime) <= 5 * 60 * 1000)) {
             return info;

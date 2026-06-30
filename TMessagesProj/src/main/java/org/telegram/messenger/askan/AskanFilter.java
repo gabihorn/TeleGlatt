@@ -1021,6 +1021,9 @@ public class AskanFilter {
         if (username == null || username.isEmpty()) return;
         if (username.equals(usernameById.get(idStr))) return;
         usernameById.put(idStr, username);
+        // Persistence is opportunistic and orthogonal to the block decision. Skip it when
+        // there is no Android context (unit tests / cold env) — the decision is unaffected.
+        if (ApplicationLoader.applicationContext == null) return;
         Set<String> snapshot = new HashSet<>(usernameById.size());
         for (Map.Entry<String, String> e : usernameById.entrySet()) {
             snapshot.add(e.getKey() + "|" + e.getValue());
