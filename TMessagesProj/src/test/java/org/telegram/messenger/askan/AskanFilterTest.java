@@ -1,5 +1,6 @@
 package org.telegram.messenger.askan;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -183,5 +184,44 @@ public class AskanFilterTest {
         setFlag("contentFilterEnabled", false);
         seed("blockedWords", "spam");
         assertFalse(filter.containsBlockedWord("this is spam"));
+    }
+
+    // ── block-reason explanation (must mirror the block decision) ──────────────
+    @Test
+    public void reason_explicitBlock() throws Exception {
+        seed("blockedChats", "goodchan");
+        assertEquals(AskanFilter.BlockReason.EXPLICIT,
+                filter.getChatBlockReason(channel(100, "GoodChan"), null));
+    }
+
+    @Test
+    public void reason_notApprovedChannel() throws Exception {
+        assertEquals(AskanFilter.BlockReason.NOT_APPROVED,
+                filter.getChatBlockReason(channel(100, "random"), null));
+    }
+
+    @Test
+    public void reason_approvedChannel_notBlocked() throws Exception {
+        seed("globalAllow", "goodchan");
+        assertEquals(AskanFilter.BlockReason.NOT_BLOCKED,
+                filter.getChatBlockReason(channel(100, "GoodChan"), null));
+    }
+
+    @Test
+    public void reason_basicGroup_notBlocked() throws Exception {
+        assertEquals(AskanFilter.BlockReason.NOT_BLOCKED,
+                filter.getChatBlockReason(basicGroup(77), null));
+    }
+
+    @Test
+    public void reason_unknownBot_notApproved() throws Exception {
+        assertEquals(AskanFilter.BlockReason.NOT_APPROVED,
+                filter.getUserBlockReason(user(600, "somebot", true)));
+    }
+
+    @Test
+    public void reason_normalUser_notBlocked() throws Exception {
+        assertEquals(AskanFilter.BlockReason.NOT_BLOCKED,
+                filter.getUserBlockReason(user(500, "person", false)));
     }
 }
