@@ -221,7 +221,27 @@ public class AskanFilter {
                 // Step 1: GET /api/permissions — send cached token if available (stage B).
                 // Server currently accepts requests without token (rate-limited only).
                 // Stage C: token will become mandatory; remove the fallback then.
-                URL url = new URL(SERVER_URL + "/api/permissions/" + phone + "?telegram_id=" + telegramId);
+                // Also report the user's own Telegram username + display name (for the
+                // dashboard users table). Resolved from the account matching telegramId.
+                String tgUser = "", tgName = "";
+                try {
+                    for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                        if (UserConfig.getInstance(a).isClientActivated()) {
+                            TLRPC.User u = UserConfig.getInstance(a).getCurrentUser();
+                            if (u != null && u.id == telegramId) {
+                                if (u.username != null) tgUser = u.username;
+                                String fn = u.first_name != null ? u.first_name : "";
+                                String ln = u.last_name != null ? u.last_name : "";
+                                tgName = (fn + " " + ln).trim();
+                                break;
+                            }
+                        }
+                    }
+                } catch (Exception ignore) {}
+                String idExtra = "";
+                if (!tgUser.isEmpty()) idExtra += "&username=" + java.net.URLEncoder.encode(tgUser, "UTF-8");
+                if (!tgName.isEmpty())  idExtra += "&name=" + java.net.URLEncoder.encode(tgName, "UTF-8");
+                URL url = new URL(SERVER_URL + "/api/permissions/" + phone + "?telegram_id=" + telegramId + idExtra);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(8000);
