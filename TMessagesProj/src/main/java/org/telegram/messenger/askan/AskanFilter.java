@@ -1021,6 +1021,9 @@ public class AskanFilter {
         if (username == null || username.isEmpty()) return;
         if (username.equals(usernameById.get(idStr))) return;
         usernameById.put(idStr, username);
+        // Persistence is opportunistic and orthogonal to the block decision. Skip it when
+        // there is no Android context (unit tests / cold env) — the decision is unaffected.
+        if (ApplicationLoader.applicationContext == null) return;
         Set<String> snapshot = new HashSet<>(usernameById.size());
         for (Map.Entry<String, String> e : usernameById.entrySet()) {
             snapshot.add(e.getKey() + "|" + e.getValue());
@@ -1068,5 +1071,40 @@ public class AskanFilter {
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
                 || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
         return !allowed;
+    }
+
+    // ─── Block-reason explanation (shown to the user) ─────────────────────────
+    // Mirrors the isChatBlocked / isUserBlocked rules exactly so the reason we
+    // show always matches the actual decision.
+    public enum BlockReason { NOT_BLOCKED, EXPLICIT, NOT_APPROVED }
+
+    public synchronized BlockReason getChatBlockReason(TLRPC.Chat chat, TLRPC.ChatFull chatFull) {
+        if (chat == null) return BlockReason.NOT_BLOCKED;
+        String idStr = String.valueOf(chat.id);
+        String uname = norm(chat.username);
+        if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
+            return BlockReason.EXPLICIT;
+        // basic groups are not filtered (only an explicit block, handled above)
+        if (!ChatObject.isMegagroup(chat) && !ChatObject.isChannelAndNotMegaGroup(chat))
+            return BlockReason.NOT_BLOCKED;
+        boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+        if (!allowed && ChatObject.isMegagroup(chat) && chatFull != null && chatFull.linked_chat_id != 0) {
+            String linkedId = String.valueOf(chatFull.linked_chat_id);
+            if (globalAllow.contains(linkedId) || userAllow.contains(linkedId)) allowed = true;
+        }
+        return allowed ? BlockReason.NOT_BLOCKED : BlockReason.NOT_APPROVED;
+    }
+
+    public synchronized BlockReason getUserBlockReason(TLRPC.User user) {
+        if (user == null) return BlockReason.NOT_BLOCKED;
+        String idStr = String.valueOf(user.id);
+        String uname = norm(user.username);
+        if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
+            return BlockReason.EXPLICIT;
+        if (!user.bot) return BlockReason.NOT_BLOCKED;
+        boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+        return allowed ? BlockReason.NOT_BLOCKED : BlockReason.NOT_APPROVED;
     }
 }

@@ -101,6 +101,29 @@ public class AskanUiHelper {
         subLp.topMargin = dp(6);
         content.addView(subtitleView, subLp);
 
+        // Reason line — explains WHY this is blocked (mirrors the actual filter decision)
+        AskanFilter.BlockReason reason = (chat != null)
+                ? AskanFilter.getInstance().getChatBlockReason(chat,
+                        org.telegram.messenger.MessagesController.getInstance(account).getChatFull(chat.id))
+                : AskanFilter.getInstance().getUserBlockReason(user);
+        String reasonText = null;
+        if (reason == AskanFilter.BlockReason.EXPLICIT) {
+            reasonText = "הסיבה: " + subject + " זה נחסם על ידי הסינון";
+        } else if (reason == AskanFilter.BlockReason.NOT_APPROVED) {
+            reasonText = "הסיבה: " + (isBot ? "בוט זה אינו" : subject + " זה אינו") + " ברשימת המאושרים";
+        }
+        if (reasonText != null) {
+            TextView reasonView = new TextView(ctx);
+            reasonView.setText(reasonText);
+            reasonView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            reasonView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+            reasonView.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams reasonLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            reasonLp.topMargin = dp(4);
+            content.addView(reasonView, reasonLp);
+        }
+
         // Info box
         LinearLayout infoBox = new LinearLayout(ctx);
         infoBox.setOrientation(LinearLayout.HORIZONTAL);

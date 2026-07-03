@@ -177,6 +177,9 @@ public class VideoAds {
     private void load() {
         if (loading || loaded) return;
 
+        // Askan: never load Telegram's sponsored video/post ads.
+        if (true) return;
+
         if (UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
             return;
         }
