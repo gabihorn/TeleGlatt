@@ -22,7 +22,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- READ_CALL_LOG moved to the arm64 (direct) flavor only. It auto-reads the
+         phone-call verification code, but is not an approved Google Play Call Log
+         use case, so the Play flavors (afat/bundle) must not declare it. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
 
     <permission android:name="${applicationId}.permission.MAPS_RECEIVE" android:protectionLevel="signature"/>

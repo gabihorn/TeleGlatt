@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Play Store flavor: self-install is never used on Play installs
+     (ForceUpdateActivity routes them to the Play In-App Update API), so the
+     REQUEST_INSTALL_PACKAGES permission (declared in the library manifest) is
+     stripped for a clean Play permission set. READ_CALL_LOG is not declared for
+     Play at all (moved to the arm64 direct flavor). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+                     tools:node="remove" />
+</manifest>

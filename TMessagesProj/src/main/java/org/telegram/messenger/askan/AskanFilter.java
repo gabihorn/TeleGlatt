@@ -218,11 +218,9 @@ public class AskanFilter {
     public void fetchPermissions(String phone, long telegramId) {
         new Thread(() -> {
             try {
-                // Step 1: GET /api/permissions — send cached token if available (stage B).
-                // Server currently accepts requests without token (rate-limited only).
-                // Stage C: token will become mandatory; remove the fallback then.
-                // Also report the user's own Telegram username + display name (for the
-                // dashboard users table). Resolved from the account matching telegramId.
+                // Step 1: GET /api/permissions — send the cached device token when
+                // available. Also report the user's own Telegram username + display
+                // name, resolved from the account matching telegramId.
                 String tgUser = "", tgName = "";
                 try {
                     for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
@@ -246,7 +244,7 @@ public class AskanFilter {
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(8000);
-                // Send cached token if present — allows server to validate identity even before stage C
+                // Send the cached device token if present so the server can validate identity.
                 String cachedToken = deviceToken;
                 if (cachedToken != null) {
                     conn.setRequestProperty("X-Device-Token", cachedToken);

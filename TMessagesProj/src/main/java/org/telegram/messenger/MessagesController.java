@@ -724,14 +724,20 @@ public class MessagesController extends BaseController implements NotificationCe
     public int transcribeButtonPressed;
     public boolean starsLocked;
 
+    // Askan: TeleGlatt is a filtered client — Telegram Premium/Stars purchase UI
+    // is hidden entirely. With no digital-goods purchase flow, Google Play Billing
+    // policy doesn't apply and no unconfigured store products can appear broken.
+    // This hard-overrides Telegram's server-driven premiumLocked/starsLocked flags
+    // (the same code path Telegram uses in regions where Premium isn't sold), so a
+    // server config push can't re-enable the purchase surfaces. GPL permits this.
     public boolean starsPurchaseAvailable() {
-        return !starsLocked;
+        return false;
     }
     public boolean premiumFeaturesBlocked() {
-        return premiumLocked && !getUserConfig().isPremium();
+        return !getUserConfig().isPremium();
     }
     public boolean premiumPurchaseBlocked() {
-        return premiumLocked;
+        return true;
     }
 
     public List<String> directPaymentsCurrency = new ArrayList<>();

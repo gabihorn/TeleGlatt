@@ -1,39 +1,58 @@
-## Telegram messenger for Android
+# TeleGlatt
 
-[Telegram](https://telegram.org) is a messaging app with a focus on speed and security. It’s superfast, simple and free.
-This repo contains the official source code for [Telegram App for Android](https://play.google.com/store/apps/details?id=org.telegram.messenger).
+**TeleGlatt is an unofficial, filtered Telegram client for Android**, published by
+Askan for communities that need a content-filtered messaging experience. It is a
+fork of the open-source [Telegram for Android](https://github.com/DrKLO/Telegram)
+and is **not affiliated with, endorsed by, or operated by Telegram FZ-LLC**.
 
-## Creating your Telegram Application
+Package: `com.teleglatt`
 
-We welcome all developers to use our API and source code to create applications on our platform.
-There are several things we require from **all developers** for the moment.
+## License
 
-1. [**Obtain your own api_id**](https://core.telegram.org/api/obtaining_api_id) for your application.
-2. Please **do not** use the name Telegram for your app — or make sure your users understand that it is unofficial.
-3. Kindly **do not** use our standard logo (white paper plane in a blue circle) as your app's logo.
-3. Please study our [**security guidelines**](https://core.telegram.org/mtproto/security_guidelines) and take good care of your users' data and privacy.
-4. Please remember to publish **your** code too in order to comply with the licences.
+TeleGlatt is distributed under the **GNU General Public License v2** (see
+[`LICENSE`](LICENSE)), the same license as upstream Telegram. In accordance with
+the GPL, the complete corresponding source code for the client — including our
+modifications — is published in this repository. A pointer to this source is also
+provided to end users in our
+[privacy policy](https://pub-580b9c5580174ab08270b6b773af1134.r2.dev/privacy.html).
 
-### API, Protocol documentation
+## Relationship to Telegram
 
-Telegram API manuals: https://core.telegram.org/api
+This fork follows Telegram's requirements for third-party clients:
 
-MTproto protocol manuals: https://core.telegram.org/mtproto
+1. It uses **its own `api_id`/`api_hash`** (not Telegram's).
+2. It does **not** use the name "Telegram" — the app is named **TeleGlatt** — and
+   makes clear to users that it is unofficial.
+3. It does **not** use Telegram's standard logo.
+4. Its source is published to comply with the GPL (this repository).
 
-### Compilation Guide
+The Telegram **name, logo, and trademarks** remain the property of Telegram FZ-LLC.
 
-**Note**: In order to support [reproducible builds](https://core.telegram.org/reproducible-builds), this repo contains dummy release.keystore,  google-services.json and filled variables inside BuildVars.java. Before publishing your own APKs please make sure to replace all these files with your own.
+## What this fork changes
 
-You will require Android Studio 3.4, Android NDK rev. 20 and Android SDK 8.1
+TeleGlatt adds a server-driven content-filtering layer on top of the standard
+Telegram client. A high-level summary of the modifications is in
+[`MODIFICATIONS.md`](MODIFICATIONS.md). The filtering **policy** (which content is
+allowed) is decided by a separate backend service and is **not** part of this
+client; this repository contains only the GPL-covered Android client.
 
-1. Download the Telegram source code from https://github.com/DrKLO/Telegram ( git clone https://github.com/DrKLO/Telegram.git )
-2. Copy your release.keystore into TMessagesProj/config
-3. Fill out RELEASE_KEY_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_STORE_PASSWORD in gradle.properties to access your  release.keystore
-4.  Go to https://console.firebase.google.com/, create two android apps with application IDs org.telegram.messenger and org.telegram.messenger.beta, turn on firebase messaging and download google-services.json, which should be copied to the same folder as TMessagesProj.
-5. Open the project in the Studio (note that it should be opened, NOT imported).
-6. Fill out values in TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java – there’s a link for each of the variables showing where and which data to obtain.
-7. You are ready to compile Telegram.
+## Build
 
-### Localization
+This is a standard Telegram-fork Gradle build.
 
-We moved all translations to https://translations.telegram.org/en/android/. Please use it.
+- Android Studio (recent), Android NDK r27, Android SDK 35.
+- Before building your own signed artifacts, replace the dummy `release.keystore`,
+  `google-services.json`, and the `api_id`/`api_hash` in `BuildVars.java` with
+  your own.
+
+Build variants:
+
+- **Play Store (AAB):** `./gradlew :TMessagesProj_App:bundleAfatRelease`
+  (no in-app APK self-update; uses Google Play In-App Update).
+- **Direct APK (sideload):** `./gradlew :TMessagesProj_App:assembleArm64Release`.
+
+### API / protocol documentation
+
+- Telegram API: https://core.telegram.org/api
+- MTProto protocol: https://core.telegram.org/mtproto
+- Security guidelines: https://core.telegram.org/mtproto/security_guidelines

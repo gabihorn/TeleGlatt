@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Direct sideload flavor keeps READ_CALL_LOG (auto-reads the phone-call
+     verification code). The Play flavors deliberately omit it. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+</manifest>
