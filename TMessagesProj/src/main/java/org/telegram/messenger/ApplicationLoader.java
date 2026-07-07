@@ -362,7 +362,10 @@ public class ApplicationLoader extends Application {
         if (preferences.contains("pushService")) {
             enabled = preferences.getBoolean("pushService", true);
         } else {
-            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", false);
+            // Askan: default the keep-alive background connection ON. Telegram-fork FCM
+            // push isn't delivered (different Firebase project than Telegram's sender),
+            // so without this users only receive messages when they open the app.
+            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", true);
         }
         if (enabled) {
             try {
