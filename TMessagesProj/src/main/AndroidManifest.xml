@@ -91,7 +91,9 @@
     <uses-permission android:name="com.android.vending.BILLING"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="replace" />
 
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Askan: removed ACCESS_BACKGROUND_LOCATION for Google Play — it triggers the
+         restricted-permission review (justification form + video) and frequent rejection.
+         Live location sharing still works while the app is open (ACCESS_FINE/COARSE_LOCATION). -->
 
     <uses-sdk tools:overrideLibrary="com.google.mlkit.vision.segmentation.subject"/>
 
