@@ -424,6 +424,42 @@ public class InviteMembersBottomSheet extends UsersAlertBase implements Notifica
         }
     }
 
+    // ─── Askan allow-list filtering (widget chat picker) ──────────────────────
+    // When this sheet is used as the widget chat chooser (dialogsDelegate != null),
+    // only channels/chats that pass AskanFilter may appear as selectable options —
+    // matching the filtering applied to the main dialog list (see DialogsAdapter).
+    private boolean isObjectBlocked(TLObject object) {
+        if (object instanceof TLRPC.Chat) {
+            TLRPC.Chat chat = (TLRPC.Chat) object;
+            TLRPC.ChatFull chatFull = MessagesController.getInstance(currentAccount).getChatFull(chat.id);
+            return org.telegram.messenger.askan.AskanFilter.getInstance().isChatBlocked(chat, chatFull);
+        } else if (object instanceof TLRPC.User) {
+            return org.telegram.messenger.askan.AskanFilter.getInstance().isUserBlocked((TLRPC.User) object);
+        }
+        return false;
+    }
+
+    private boolean isDialogBlocked(long dialogId) {
+        MessagesController mc = MessagesController.getInstance(currentAccount);
+        if (dialogId < 0) {
+            return org.telegram.messenger.askan.AskanFilter.getInstance().isChatBlocked(mc.getChat(-dialogId), mc.getChatFull(-dialogId));
+        } else if (dialogId > 0) {
+            return org.telegram.messenger.askan.AskanFilter.getInstance().isUserBlocked(mc.getUser(dialogId));
+        }
+        return false;
+    }
+
+    private ArrayList<TLRPC.Dialog> filterAllowedDialogs(ArrayList<TLRPC.Dialog> input) {
+        ArrayList<TLRPC.Dialog> out = new ArrayList<>(input.size());
+        for (int a = 0; a < input.size(); a++) {
+            TLRPC.Dialog dialog = input.get(a);
+            if (!isDialogBlocked(dialog.id)) {
+                out.add(dialog);
+            }
+        }
+        return out;
+    }
+
     private void updateRows() {
         contactsStartRow = -1;
         contactsEndRow = -1;
@@ -475,7 +511,7 @@ public class InviteMembersBottomSheet extends UsersAlertBase implements Notifica
     public void didReceivedNotification(int id, int account, Object... args) {
         if (id == NotificationCenter.dialogsNeedReload) {
             if (dialogsDelegate != null && dialogsServerOnly.isEmpty()) {
-                dialogsServerOnly = new ArrayList<>(MessagesController.getInstance(currentAccount).dialogsServerOnly);
+                dialogsServerOnly = filterAllowedDialogs(MessagesController.getInstance(currentAccount).dialogsServerOnly);
                 listViewAdapter.notifyDataSetChanged();
             }
         }
@@ -629,6 +665,7 @@ public class InviteMembersBottomSheet extends UsersAlertBase implements Notifica
         public SearchAdapter() {
             searchAdapterHelper = new SearchAdapterHelper(false);
             searchAdapterHelper.setDelegate((searchId) -> {
+                filterSearchHelperResults();
                 showItemsAnimated(currentItemsCount - 1);
                 if (searchRunnable == null && !searchAdapterHelper.isSearchInProgress() && getItemCount() <= 2) {
                     emptyView.showProgress(false, true);
@@ -809,12 +846,43 @@ public class InviteMembersBottomSheet extends UsersAlertBase implements Notifica
             return count;
         }
 
+        // Prune AskanFilter-blocked entries from the server/global search results so the
+        // widget picker never offers an unapproved channel as a selectable option.
+        private void filterSearchHelperResults() {
+            if (dialogsDelegate == null) {
+                return;
+            }
+            ArrayList<TLObject> global = searchAdapterHelper.getGlobalSearch();
+            for (int i = global.size() - 1; i >= 0; i--) {
+                if (isObjectBlocked(global.get(i))) {
+                    global.remove(i);
+                }
+            }
+            ArrayList<TLObject> localServer = searchAdapterHelper.getLocalServerSearch();
+            for (int i = localServer.size() - 1; i >= 0; i--) {
+                if (isObjectBlocked(localServer.get(i))) {
+                    localServer.remove(i);
+                }
+            }
+        }
+
         private void updateSearchResults(final ArrayList<Object> users, final ArrayList<CharSequence> names) {
             AndroidUtilities.runOnUIThread(() -> {
                 searchRunnable = null;
+                if (dialogsDelegate != null) {
+                    for (int i = users.size() - 1; i >= 0; i--) {
+                        if (users.get(i) instanceof TLObject && isObjectBlocked((TLObject) users.get(i))) {
+                            users.remove(i);
+                            if (i < names.size()) {
+                                names.remove(i);
+                            }
+                        }
+                    }
+                }
                 searchResult = users;
                 searchResultNames = names;
                 searchAdapterHelper.mergeResults(searchResult);
+                filterSearchHelperResults();
                 showItemsAnimated(currentItemsCount - 1);
                 notifyDataSetChanged();
                 if (!searchAdapterHelper.isSearchInProgress() && getItemCount() <= 2) {
@@ -1239,7 +1307,7 @@ public class InviteMembersBottomSheet extends UsersAlertBase implements Notifica
     public void setDelegate(InviteMembersBottomSheetDelegate inviteMembersBottomSheetDelegate, ArrayList<Long> selectedDialogs) {
         dialogsDelegate = inviteMembersBottomSheetDelegate;
         NotificationCenter.getInstance(currentAccount).addObserver(this, NotificationCenter.dialogsNeedReload);
-        dialogsServerOnly = new ArrayList<>(MessagesController.getInstance(currentAccount).dialogsServerOnly);
+        dialogsServerOnly = filterAllowedDialogs(MessagesController.getInstance(currentAccount).dialogsServerOnly);
         updateRows();
     }
 
