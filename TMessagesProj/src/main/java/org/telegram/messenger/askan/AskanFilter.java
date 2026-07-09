@@ -315,11 +315,15 @@ public class AskanFilter {
         new Thread(() -> {
             try {
                 long telegramId = getCachedTelegramId(phone);
+                // POST /api/requests is token-optional server-side (the user is looked
+                // up by phone). Do NOT hard-fail if a token can't be acquired — e.g.
+                // when the device_token isn't loaded yet or telegram_id resolves to -1
+                // transiently, acquireToken would 401 and strand the user with an
+                // immediate "error" even though the request would otherwise succeed.
+                // Send with whatever token we have (may be null); the server accepts it.
                 String token = acquireToken(phone, telegramId);
                 if (token == null) {
-                    FileLog.e("AskanFilter: sendAccessRequest — no token");
-                    AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult("error"); });
-                    return;
+                    FileLog.e("AskanFilter: sendAccessRequest — no token, sending unauthenticated");
                 }
 
                 JSONObject body = new JSONObject();
