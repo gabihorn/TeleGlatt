@@ -29,8 +29,13 @@ public class BuildVars {
     public static int APP_ID = 33069838;
     public static String APP_HASH = "fb06407f7e793552640f980c6b3ecfcc";
 
-    // SafetyNet key for Google Identity SDK, set it to empty to disable
-    public static String SAFETYNET_KEY = "AIzaSyDqt8P-7F7CPCseMkOiVRgb1LY8RN1bvH8";
+    // SafetyNet key for Google Identity SDK, set it to empty to disable.
+    // Emptied for TeleGlatt: the fork cannot pass Telegram's Firebase/Play-Integrity
+    // attestation (nonce+project belong to the official app), so requestFirebaseSms
+    // always failed and NO sms was delivered on new devices. Empty key ⇒
+    // allow_firebase=false (LoginActivity ~3087) ⇒ Telegram falls back to plain
+    // sentCodeTypeSms, which actually reaches the phone.
+    public static String SAFETYNET_KEY = "";
     public static String PLAYSTORE_APP_URL = "https://play.google.com/store/apps/details?id=org.telegram.messenger";
     public static String HUAWEI_STORE_URL = "https://appgallery.huawei.com/app/C101184875";
     public static String GOOGLE_AUTH_CLIENT_ID = "760348033671-81kmi3pi84p11ub8hp9a1funsv0rn2p9.apps.googleusercontent.com";
