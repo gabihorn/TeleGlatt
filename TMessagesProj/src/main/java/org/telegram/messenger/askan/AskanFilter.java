@@ -269,6 +269,11 @@ public class AskanFilter {
                 while ((line = reader.readLine()) != null) sb.append(line);
                 reader.close();
                 parseAndSave(sb.toString());
+                // Arm the onResume throttle ONLY now that a fetch has actually succeeded
+                // and the cache holds fresh lists. Arming it before the request (as the
+                // caller used to) let a failed/empty fetch suppress retries for 5 minutes,
+                // stranding users on stale permissions until a manual force-close.
+                lastPermissionsFetch = System.currentTimeMillis();
 
                 // Step 2: Ensure device token before authenticated calls
                 String tok = acquireToken(phone, telegramId);

@@ -6904,7 +6904,12 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         if (!onlySelect && folderId == 0) {
             long now = System.currentTimeMillis();
             if (now - org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch > 5 * 60 * 1000L) {
-                org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch = now;
+                // NOTE: the throttle timestamp is armed by fetchPermissions ONLY after a
+                // successful parseAndSave — not here. Arming it before the request meant a
+                // failed/empty fetch (transient network, or the server-side empty-lists bug)
+                // blocked any retry for a full 5 minutes, which is why users stayed stuck on
+                // stale/empty permissions until a manual force-close. Do not re-add an
+                // assignment here.
                 TLRPC.User me = getUserConfig().getCurrentUser();
                 if (me != null && me.phone != null && !me.phone.isEmpty()) {
                     org.telegram.messenger.askan.AskanFilter.getInstance()
