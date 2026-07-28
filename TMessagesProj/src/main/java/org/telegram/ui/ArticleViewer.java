@@ -5538,6 +5538,34 @@ public class ArticleViewer extends IArticleViewer implements NotificationCenter.
             return false;
         }
 
+        // Askan: never render Instant View articles in-app. The in-app ArticleViewer
+        // paints full web content (text/images/video) fetched straight from the source
+        // site, bypassing the device's filtered browser — the one surface where links
+        // still escaped the filter (Browser.openUrl already forces every other link to
+        // the external, device-filtered browser via inappBrowser=false). Resolve the
+        // article's source URL and hand it to that same external browser instead of
+        // opening the viewer. Covers every entry point (chat, shared media, search,
+        // admin log) at this single choke point.
+        // Guarded by a non-constant condition so javac does not flag the (intentionally
+        // retained) upstream body below as unreachable — same idiom as the sponsored-ads
+        // patches. Keeping the original code intact keeps future upstream merges clean.
+        if (parentActivity != null) {
+            String askanUrl = webUrl;
+            if (TextUtils.isEmpty(askanUrl)) askanUrl = url;
+            if (TextUtils.isEmpty(askanUrl)) {
+                TLRPC.WebPage wp = webpage;
+                if (wp == null && messageObject != null && messageObject.messageOwner != null
+                        && messageObject.messageOwner.media != null) {
+                    wp = messageObject.messageOwner.media.webpage;
+                }
+                if (wp != null) askanUrl = wp.url;
+            }
+            if (!TextUtils.isEmpty(askanUrl)) {
+                Browser.openInExternalBrowser(parentActivity, askanUrl, true);
+            }
+            return true;
+        }
+
         if (parentFragment != null && parentFragment.getParentLayout() instanceof ActionBarLayout) {
             AndroidUtilities.hideKeyboard((ActionBarLayout) parentFragment.getParentLayout());
         }
