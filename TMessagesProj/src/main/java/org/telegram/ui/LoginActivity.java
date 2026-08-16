@@ -3556,6 +3556,14 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
     }
 
     public class LoginActivitySmsView extends SlideView implements NotificationCenter.NotificationCenterDelegate {
+
+        // Shown under the "we sent you a code" line when the code went to an existing
+        // Telegram session rather than by SMS. See the AUTH_TYPE_MESSAGE branch below.
+        private static final String ASKAN_APP_CODE_HINT =
+                "⚠️ הקוד לא נשלח ב-SMS.\n" +
+                "פתחו את אפליקציית טלגרם הרגילה במכשיר — הקוד נשלח לשם, בהודעה מ-Telegram.\n" +
+                "אין לכם טלגרם רגילה? התקינו אותה, קבלו את הקוד, ואפשר להסיר אחר כך.";
+
         /* package */ RLottieDrawable hintDrawable;
 
         private String phone;
@@ -4418,6 +4426,17 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             } else {
                 if (currentType == AUTH_TYPE_MESSAGE) {
                     str = AndroidUtilities.replaceTags(LocaleController.formatString("SentAppCodeWithPhone", R.string.SentAppCodeWithPhone, LocaleController.addNbsp(number)));
+                    // Askan: AUTH_TYPE_MESSAGE means Telegram delivered the code to an
+                    // EXISTING active session, not by SMS — its own behaviour for a phone
+                    // that already has an account. New users routinely sit waiting for an
+                    // SMS that is never coming, give up, and (in at least one 1-star Play
+                    // review) conclude the app is broken. Spell out where the code actually
+                    // went.
+                    //
+                    // Hardcoded rather than an R.string: Telegram's cloud language packs
+                    // override resource strings for non-Hebrew device languages, which is
+                    // the same trap that hit the intro screen (see teleglatt-invariants #6).
+                    str = TextUtils.concat(str, "\n\n", ASKAN_APP_CODE_HINT);
                 } else if (currentType == AUTH_TYPE_SMS) {
                     str = AndroidUtilities.replaceTags(LocaleController.formatString("SentSmsCode", R.string.SentSmsCode, LocaleController.addNbsp(number)));
                 } else if (currentType == AUTH_TYPE_FLASH_CALL) {
