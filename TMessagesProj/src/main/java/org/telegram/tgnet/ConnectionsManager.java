@@ -392,6 +392,33 @@ public class ConnectionsManager extends BaseController {
                 return;
             }
         }
+        // Bot mini apps are the same hole, wider: requesting a web view hands a bot a
+        // full in-app browser rendering arbitrary web content. None of it passes the
+        // channel lists, and none of it goes through the external, device-filtered
+        // browser that every ordinary link is forced into (Browser.java pins
+        // inappBrowser=false). Reachable without ever opening a bot chat, since
+        // attach-menu bots appear in the attachment menu of any chat.
+        //
+        // Same rule as inline bots: only an explicitly allowed bot may open one.
+        // Blocking the request leaves the sheet empty instead of loading a page.
+        if (object instanceof TLRPC.TL_messages_requestWebView) {
+            if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(((TLRPC.TL_messages_requestWebView) object).bot)) {
+                if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked bot web view request");
+                return;
+            }
+        }
+        if (object instanceof TLRPC.TL_messages_requestSimpleWebView) {
+            if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(((TLRPC.TL_messages_requestSimpleWebView) object).bot)) {
+                if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked simple web view request");
+                return;
+            }
+        }
+        // requestAppWebView identifies the target as an InputBotApp, not an InputUser,
+        // so there is no bot to check against the allow list — denied outright.
+        if (object instanceof TLRPC.TL_messages_requestAppWebView) {
+            if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked app web view request");
+            return;
+        }
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("send request " + object + " with token = " + requestToken);
         }
