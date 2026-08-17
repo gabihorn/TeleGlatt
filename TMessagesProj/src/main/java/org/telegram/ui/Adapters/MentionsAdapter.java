@@ -557,6 +557,31 @@ public class MentionsAdapter extends RecyclerListView.SelectionAdapter implement
     private void processFoundUser(TLRPC.User user) {
         contextUsernameReqid = 0;
         locationProvider.stop();
+        // Askan: inline bots are a filter bypass. Typing "@pic", "@vid", "@gif" etc.
+        // in any chat opens an in-app media search served straight by the bot —
+        // arbitrary images and video, never passing through the channel allow/block
+        // lists. Gate them the same way channels are gated: a bot must be explicitly
+        // allowed (by username or numeric id) before its results can be requested.
+        //
+        // Placed here because every path that resolves an inline bot — cache hit,
+        // network resolve, and the re-check after inline media becomes enabled —
+        // funnels through this method, so one check covers them all. Falling through
+        // with foundContextBot left null reuses Telegram's own "no such bot" handling,
+        // so the suggestion panel simply never appears.
+        if (user != null && user.bot) {
+            final org.telegram.messenger.askan.AskanFilter filter = org.telegram.messenger.askan.AskanFilter.getInstance();
+            if (!filter.isExplicitlyAllowed(String.valueOf(user.id), user.username)) {
+                foundContextBot = null;
+                searchResultBotContextSwitch = null;
+                inlineMediaEnabled = true;
+                noUserName = true;
+                notifyDataSetChanged();
+                if (delegate != null) {
+                    delegate.needChangePanelVisibility(false);
+                }
+                return;
+            }
+        }
         if (user != null && user.bot && user.bot_inline_placeholder != null) {
             foundContextBot = user;
             if (user != null && user.id != searchResultBotContextSwitchUserId) {

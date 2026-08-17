@@ -369,6 +369,29 @@ public class ConnectionsManager extends BaseController {
     }
 
     private void sendRequestInternal(TLObject object, RequestDelegate onComplete, RequestDelegateTimestamp onCompleteTimestamp, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken) {
+        // Askan: inline bots are an unfiltered media pipe. Typing "@pic", "@vid" or
+        // "@gif" in any chat — and equally the GIF panel (bot "gif") and the attach
+        // menu's image search (bot "pic") — asks a bot for arbitrary images and video
+        // that never pass through the channel allow/block lists.
+        //
+        // Blocked here rather than at each screen because every surface, present and
+        // future, ends up in this method: the three known ones plus whatever upstream
+        // adds later, which matters since a rebase must not silently reopen this.
+        // Individually patching the ~10 call sites would have left exactly that gap.
+        //
+        // A bot the admin has explicitly allowed still works, so a deliberately
+        // whitelisted tool bot is unaffected. Dropping the request (rather than
+        // erroring) leaves the caller showing an empty result list, which is how
+        // Telegram already renders "this bot returned nothing".
+        if (object instanceof TLRPC.TL_messages_getInlineBotResults) {
+            final TLRPC.TL_messages_getInlineBotResults r = (TLRPC.TL_messages_getInlineBotResults) object;
+            if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(r.bot)) {
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.d("Askan: blocked inline bot results request");
+                }
+                return;
+            }
+        }
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("send request " + object + " with token = " + requestToken);
         }

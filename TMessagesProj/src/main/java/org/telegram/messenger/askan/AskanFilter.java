@@ -546,6 +546,33 @@ public class AskanFilter {
         return u != null && (globalAllow.contains(u) || userAllow.contains(u));
     }
 
+    /**
+     * Inline bots (@pic, @vid, @gif and friends) serve arbitrary images and video
+     * straight into the chat UI, bypassing the channel allow/block lists entirely.
+     * They are therefore denied by default; only a bot the admin has explicitly
+     * allowed may answer. Called from ConnectionsManager for every
+     * TL_messages_getInlineBotResults, so it covers the typed "@bot" path, the GIF
+     * panel and the attach-menu image search alike.
+     *
+     * Fail-CLOSED on an unidentifiable bot: unlike the permission lists — where an
+     * empty response looks to the user like their account was wiped — the safe answer
+     * here is simply "no results", so an unresolvable bot must not become a hole.
+     */
+    public synchronized boolean isInlineBotAllowed(TLRPC.InputUser bot) {
+        if (bot == null) return false;
+        long id = 0;
+        if (bot instanceof TLRPC.TL_inputUser) {
+            id = ((TLRPC.TL_inputUser) bot).user_id;
+        } else if (bot instanceof TLRPC.TL_inputUserFromMessage) {
+            id = ((TLRPC.TL_inputUserFromMessage) bot).user_id;
+        } else {
+            return false; // inputUserSelf / inputUserEmpty / unknown — not a usable bot
+        }
+        if (id == 0) return false;
+        String username = usernameById.get(String.valueOf(id));
+        return isExplicitlyAllowed(String.valueOf(id), username);
+    }
+
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
     public synchronized boolean shouldShowStories() { return showStories; }
     public synchronized boolean isContentFilterEnabled() { return contentFilterEnabled; }
