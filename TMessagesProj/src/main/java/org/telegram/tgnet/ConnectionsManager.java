@@ -369,6 +369,56 @@ public class ConnectionsManager extends BaseController {
     }
 
     private void sendRequestInternal(TLObject object, RequestDelegate onComplete, RequestDelegateTimestamp onCompleteTimestamp, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken) {
+        // Askan: inline bots are an unfiltered media pipe. Typing "@pic", "@vid" or
+        // "@gif" in any chat — and equally the GIF panel (bot "gif") and the attach
+        // menu's image search (bot "pic") — asks a bot for arbitrary images and video
+        // that never pass through the channel allow/block lists.
+        //
+        // Blocked here rather than at each screen because every surface, present and
+        // future, ends up in this method: the three known ones plus whatever upstream
+        // adds later, which matters since a rebase must not silently reopen this.
+        // Individually patching the ~10 call sites would have left exactly that gap.
+        //
+        // A bot the admin has explicitly allowed still works, so a deliberately
+        // whitelisted tool bot is unaffected. Dropping the request (rather than
+        // erroring) leaves the caller showing an empty result list, which is how
+        // Telegram already renders "this bot returned nothing".
+        if (object instanceof TLRPC.TL_messages_getInlineBotResults) {
+            final TLRPC.TL_messages_getInlineBotResults r = (TLRPC.TL_messages_getInlineBotResults) object;
+            if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(r.bot)) {
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.d("Askan: blocked inline bot results request");
+                }
+                return;
+            }
+        }
+        // Bot mini apps are the same hole, wider: requesting a web view hands a bot a
+        // full in-app browser rendering arbitrary web content. None of it passes the
+        // channel lists, and none of it goes through the external, device-filtered
+        // browser that every ordinary link is forced into (Browser.java pins
+        // inappBrowser=false). Reachable without ever opening a bot chat, since
+        // attach-menu bots appear in the attachment menu of any chat.
+        //
+        // Same rule as inline bots: only an explicitly allowed bot may open one.
+        // Blocking the request leaves the sheet empty instead of loading a page.
+        if (object instanceof TLRPC.TL_messages_requestWebView) {
+            if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(((TLRPC.TL_messages_requestWebView) object).bot)) {
+                if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked bot web view request");
+                return;
+            }
+        }
+        if (object instanceof TLRPC.TL_messages_requestSimpleWebView) {
+            if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(((TLRPC.TL_messages_requestSimpleWebView) object).bot)) {
+                if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked simple web view request");
+                return;
+            }
+        }
+        // requestAppWebView identifies the target as an InputBotApp, not an InputUser,
+        // so there is no bot to check against the allow list — denied outright.
+        if (object instanceof TLRPC.TL_messages_requestAppWebView) {
+            if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked app web view request");
+            return;
+        }
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("send request " + object + " with token = " + requestToken);
         }
