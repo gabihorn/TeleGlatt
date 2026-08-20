@@ -758,7 +758,7 @@ public class SearchViewPager extends ViewPagerFixed implements FilteredSearchVie
                     }
                     noMediaFiltersSearchView.animate().alpha(1f).setDuration(150).start();
                 }
-                noMediaFiltersSearchView.search(dialogId, minDate, maxDate, null, includeFolder, query, reset);
+                noMediaFiltersSearchView.search(dialogId, 0, minDate, maxDate, null, includeFolder, query, reset);
                 emptyView.setVisibility(View.GONE);
             }
             emptyView.setKeyboardHeight(keyboardSize, false);
@@ -767,7 +767,7 @@ public class SearchViewPager extends ViewPagerFixed implements FilteredSearchVie
             ((FilteredSearchView) view).setUseFromUserAsAvatar(forumDialogId != 0);
             ((FilteredSearchView) view).setKeyboardHeight(keyboardSize, false);
             ViewPagerAdapter.Item item = viewPagerAdapter.items.get(position);
-            ((FilteredSearchView) view).search(dialogId, minDate, maxDate, FiltersView.filters[item.filterIndex], includeFolder, query, reset);
+            ((FilteredSearchView) view).search(dialogId, 0, minDate, maxDate, FiltersView.filters[item.filterIndex], includeFolder, query, reset);
         } else if (view instanceof SearchDownloadsContainer) {
             ((SearchDownloadsContainer) view).setKeyboardHeight(keyboardSize, false);
             ((SearchDownloadsContainer) view).search(query);
@@ -1025,6 +1025,25 @@ public class SearchViewPager extends ViewPagerFixed implements FilteredSearchVie
         args.putInt("message_id", messageObject.getId());
         parent.presentFragment(new ChatActivity(args));
         showActionMode(false);
+    }
+
+    public static ChatActivity createFragmentFromMessage(final int currentAccount, MessageObject messageObject) {
+        Bundle args = new Bundle();
+        long dialogId = messageObject.getDialogId();
+        if (DialogObject.isEncryptedDialog(dialogId)) {
+            args.putInt("enc_id", DialogObject.getEncryptedChatId(dialogId));
+        } else if (DialogObject.isUserDialog(dialogId)) {
+            args.putLong("user_id", dialogId);
+        } else {
+            TLRPC.Chat chat = AccountInstance.getInstance(currentAccount).getMessagesController().getChat(-dialogId);
+            if (chat != null && chat.migrated_to != null) {
+                args.putLong("migrated_to", dialogId);
+                dialogId = -chat.migrated_to.channel_id;
+            }
+            args.putLong("chat_id", -dialogId);
+        }
+        args.putInt("message_id", messageObject.getId());
+        return new ChatActivity(args);
     }
 
     @Override

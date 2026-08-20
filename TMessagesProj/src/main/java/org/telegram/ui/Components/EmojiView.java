@@ -2923,6 +2923,12 @@ public class EmojiView extends FrameLayout implements
         }
     }
 
+    public void hideBottomTabContainerBackground() {
+        if (bottomTabContainerBackground != null) {
+            bottomTabContainerBackground.setVisibility(View.GONE);
+        }
+    }
+
     public void setBlurredBackgroundDrawableFactory(BlurredBackgroundDrawableViewFactory factory) {
         if (backspaceButton != null) {
             backspaceButton.setBackground(factory.create(backspaceButton)
@@ -3237,6 +3243,7 @@ public class EmojiView extends FrameLayout implements
                     drawable.draw(canvas, time, w, h, 1f);
                 }
                 canvas.restore();
+                invalidate();
             }
 
             for (int i = 0; i < lineDrawablesTmp.size(); i++) {
