@@ -50,7 +50,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class CommunityUtils {
-    public static final boolean COLLAPSED_SUPPORT = true;
+    /**
+     * Communities arrived with the Telegram 12.9.2 base, but TeleGlatt has not
+     * audited their filtering surface yet. Keep every product entry point off
+     * until the feature gets a dedicated filtering review.
+     */
+    public static final boolean ENABLED = false;
+    public static final boolean COLLAPSED_SUPPORT = ENABLED;
 
     private CommunityUtils() {
 

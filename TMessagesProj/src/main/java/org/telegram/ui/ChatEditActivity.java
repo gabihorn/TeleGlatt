@@ -109,6 +109,7 @@ import org.telegram.ui.bots.ChannelAffiliateProgramsFragment;
 import org.telegram.ui.community.CommunityCreateActivity;
 import org.telegram.ui.community.CommunityEditActivity;
 import org.telegram.ui.community.CommunitySheet;
+import org.telegram.ui.community.CommunityUtils;
 import org.telegram.ui.community.cells.CommunityLinkView2;
 
 import java.text.DecimalFormat;
@@ -1475,7 +1476,7 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
             }
         }
 
-        if (currentChat != null && currentChat.creator || currentUser != null && currentUser.bot && currentUser.bot_can_edit) {
+        if (CommunityUtils.ENABLED && (currentChat != null && currentChat.creator || currentUser != null && currentUser.bot && currentUser.bot_can_edit)) {
             final long linkedCommunityId = currentChat != null ? currentChat.linked_community_id : currentUser.linked_community_id;
             final long currentDialogId = currentChat != null ? -currentChat.id : currentUser.id;
             final boolean isBot = currentUser != null;
