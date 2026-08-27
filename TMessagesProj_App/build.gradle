@@ -22,7 +22,7 @@ dependencies {
 
 android {
     compileSdkVersion 36
-    buildToolsVersion '35.0.0'
+    buildToolsVersion '36.0.0'
 
     defaultConfig.applicationId = APP_PACKAGE
 
@@ -71,6 +71,11 @@ android {
         }
 
         standalone {
+            // The jlatexmath module upstream added in 12.10 only declares debug/release,
+            // so our extra 'standalone' build type has nothing to resolve against and the
+            // build fails with "No matching variant of project :jlatexmath". Fall back to
+            // release for any dependency that does not define standalone itself.
+            matchingFallbacks = ['release']
             debuggable false
             jniDebuggable false
             signingConfig signingConfigs.release
