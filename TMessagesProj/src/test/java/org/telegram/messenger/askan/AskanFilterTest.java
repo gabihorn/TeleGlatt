@@ -14,6 +14,8 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Set;
 
+import org.telegram.ui.community.CommunityUtils;
+
 /**
  * Regression tests for the AskanFilter decision logic — the core of the product's
  * filtering promise. These lock in the behaviour that bypasses historically came from:
@@ -25,6 +27,11 @@ import java.util.Set;
  * (server-side values are stored lowercased/@-stripped, so the sets hold normalized keys).
  */
 public class AskanFilterTest {
+
+    @Test
+    public void communitiesRemainDisabledUntilFilteringAudit() {
+        assertFalse("Telegram Communities must not ship before a filtering audit", CommunityUtils.ENABLED);
+    }
 
     private AskanFilter filter;
 
