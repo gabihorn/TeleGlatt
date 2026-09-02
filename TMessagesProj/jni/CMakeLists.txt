@@ -13,6 +13,15 @@ else()
     enable_language(ASM_NASM)
 endif()
 
+# 16KB page alignment must be global, not per-target. Play rejects any 64-bit
+# .so whose LOAD segments are aligned to 4KB, and the per-target flags further
+# down only cover ${NATIVE_LIB} — so libyuv, which arrived as its own shared
+# library with the 12.10.1 base, shipped at 0x1000 and failed the check.
+# Setting it here covers every target added below, including future third-party
+# subdirectories that build their own .so.
+set(CMAKE_SHARED_LINKER_FLAGS
+        "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384")
+
 set(CAN_COMPILE_SME FALSE CACHE INTERNAL "Disable libyuv SME" FORCE)
 add_subdirectory(
         third_party/libyuv
