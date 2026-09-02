@@ -60,8 +60,17 @@ public class AskanFilter {
     private final HashMap<String, String> usernameById = new HashMap<>();
 
     // Device token — persisted across sessions. Issued via POST /api/auth/device.
-    // Stored in SharedPreferences key "device_token".
+    // Stored per-phone in SharedPreferences under tokenKey(phone); deviceToken is
+    // just the in-memory copy for tokenPhone.
     private volatile String deviceToken = null;
+    private volatile String tokenPhone = null;
+
+    // Phone number the cached permission sets above belong to. The sets are a
+    // single global cache, so on a device with two accounts they must be dropped
+    // and refetched the moment the active account changes — otherwise account B
+    // runs on account A's grants until the 5-minute throttle expires, which would
+    // open a personally-approved channel to the wrong number.
+    private volatile String cachedPhone = null;
 
     private AskanFilter() {}
 
@@ -87,22 +96,53 @@ public class AskanFilter {
     // ─── Token management ─────────────────────────────────────────────────────
 
     /**
-     * Returns the stored token if present, or issues a new one via POST /api/auth/device.
-     * Blocks — call only from background threads.
+     * SharedPreferences key holding the device token for one phone number.
+     * Tokens are per-phone: the server issues them per user, so a device with two
+     * accounts must not reuse one account's token for the other (the server-side
+     * phone cross-check in deviceAuth rejects that with 401).
+     */
+    private static String tokenKey(String phone) {
+        return "device_token_" + (phone != null ? phone : "");
+    }
+
+    /** Returns the token for {@code phone} without issuing one. Never blocks. */
+    private String peekToken(String phone) {
+        if (phone == null) return null;
+        if (phone.equals(tokenPhone) && deviceToken != null) return deviceToken;
+        try {
+            String stored = ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getString(tokenKey(phone), null);
+            if (stored != null) {
+                deviceToken = stored;
+                tokenPhone = phone;
+            }
+            return stored;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Returns the stored token for this phone if present, or issues a new one via
+     * POST /api/auth/device. Blocks — call only from background threads.
      */
     private String acquireToken(String phone, long telegramId) {
-        String existing = deviceToken;
+        String existing = peekToken(phone);
         if (existing != null) return existing;
         return issueNewToken(phone, telegramId);
     }
 
-    /** Clears the cached token (call on 401 to force re-issuance). */
-    private void clearToken() {
-        deviceToken = null;
+    /** Clears this phone's cached token (call on 401 to force re-issuance). */
+    private void clearToken(String phone) {
+        if (phone != null && phone.equals(tokenPhone)) {
+            deviceToken = null;
+            tokenPhone = null;
+        }
         try {
             ApplicationLoader.applicationContext
                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().remove("device_token").apply();
+                    .edit().remove(tokenKey(phone)).apply();
         } catch (Exception ignored) {}
     }
 
@@ -127,9 +167,10 @@ public class AskanFilter {
                 return null;
             }
             deviceToken = tok;
+            tokenPhone = phone;
             ApplicationLoader.applicationContext
                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putString("device_token", tok).apply();
+                    .edit().putString(tokenKey(phone), tok).apply();
             Log.d("AskanFilter", "device_token acquired");
             return tok;
         } catch (Exception e) {
@@ -215,9 +256,31 @@ public class AskanFilter {
 
     // ─── Fetch from server ────────────────────────────────────────────────────
 
+    /** True when the cached permission sets were fetched for {@code phone}. */
+    public boolean isCacheForPhone(String phone) {
+        return phone != null && phone.equals(cachedPhone);
+    }
+
+    /**
+     * Drops grants belonging to a different account. Called when the active phone
+     * differs from the one the cache was built for: the allow lists are cleared
+     * immediately (fail closed — nothing extra stays reachable during the refetch)
+     * while the block lists are kept, so neither direction of an account switch
+     * leaks access. Fresh lists land a moment later via parseAndSave.
+     */
+    private void dropForeignGrants() {
+        synchronized (this) {
+            globalAllow.clear();
+            userAllow.clear();
+        }
+    }
+
     public void fetchPermissions(String phone, long telegramId) {
         new Thread(() -> {
             try {
+                if (phone != null && !phone.equals(cachedPhone)) {
+                    dropForeignGrants();
+                }
                 // Step 1: GET /api/permissions — send the cached device token when
                 // available. Also report the user's own Telegram username + display
                 // name, resolved from the account matching telegramId.
@@ -245,7 +308,7 @@ public class AskanFilter {
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(8000);
                 // Send the cached device token if present so the server can validate identity.
-                String cachedToken = deviceToken;
+                String cachedToken = peekToken(phone);
                 if (cachedToken != null) {
                     conn.setRequestProperty("X-Device-Token", cachedToken);
                 }
@@ -268,7 +331,7 @@ public class AskanFilter {
                 String line;
                 while ((line = reader.readLine()) != null) sb.append(line);
                 reader.close();
-                parseAndSave(sb.toString());
+                parseAndSave(sb.toString(), phone);
                 // Arm the onResume throttle ONLY now that a fetch has actually succeeded
                 // and the cache holds fresh lists. Arming it before the request (as the
                 // caller used to) let a failed/empty fetch suppress retries for 5 minutes,
@@ -339,7 +402,7 @@ public class AskanFilter {
 
                 HttpResult r = postJson(SERVER_URL + "/api/requests", body, token);
                 if (r.code == 401) {
-                    clearToken();
+                    clearToken(phone);
                     token = issueNewToken(phone, telegramId);
                     r = (token != null)
                             ? postJson(SERVER_URL + "/api/requests", body, token)
@@ -368,7 +431,7 @@ public class AskanFilter {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    private void parseAndSave(String json) {
+    private void parseAndSave(String json, String phone) {
         try {
             JSONObject root = new JSONObject(json);
 
@@ -428,6 +491,7 @@ public class AskanFilter {
                 updateCheckStatus     = newUpdateStatus;
                 updateCheckUrl        = newUpdateUrl;
                 updateCheckMinVersion = newUpdateMinVersion;
+                cachedPhone = phone;
             }
 
             ApplicationLoader.applicationContext
@@ -444,6 +508,7 @@ public class AskanFilter {
                     .putString("update_status",      newUpdateStatus != null ? newUpdateStatus : "")
                     .putString("update_url",          newUpdateUrl)
                     .putString("update_min_version",  newUpdateMinVersion)
+                    .putString("cached_phone", phone != null ? phone : "")
                     .apply();
 
             FileLog.d("AskanFilter: permissions loaded — global=" + newGlobal.size()
@@ -500,8 +565,14 @@ public class AskanFilter {
                 }
             }
 
-            // Restore cached device token — avoids re-issuance on every app start
-            deviceToken = prefs.getString("device_token", null);
+            // Restore the phone the cached lists belong to, then that phone's token —
+            // avoids re-issuance on every app start. If the active account turns out to
+            // be a different number, fetchPermissions drops the foreign grants and
+            // peekToken swaps in the right token.
+            String cp = prefs.getString("cached_phone", "");
+            cachedPhone = cp.isEmpty() ? null : cp;
+            tokenPhone = cachedPhone;
+            deviceToken = cachedPhone != null ? prefs.getString(tokenKey(cachedPhone), null) : null;
 
             // Restore cached version check status (from last successful fetch)
             String cachedStatus = prefs.getString("update_status", "");
@@ -636,7 +707,7 @@ public class AskanFilter {
 
                 HttpResult r = postJson(SERVER_URL + "/api/block", body, token);
                 if (r.code == 401) {
-                    clearToken();
+                    clearToken(phone);
                     token = issueNewToken(phone, telegramId);
                     if (token != null) r = postJson(SERVER_URL + "/api/block", body, token);
                 }
@@ -691,7 +762,7 @@ public class AskanFilter {
                         + "&telegram_id=" + telegramId;
                 HttpResult r = getWithToken(mineUrl, token);
                 if (r.code == 401) {
-                    clearToken();
+                    clearToken(phone);
                     token = issueNewToken(phone, telegramId);
                     r = (token != null)
                             ? getWithToken(mineUrl, token)
@@ -745,7 +816,7 @@ public class AskanFilter {
 
                 HttpResult r = postJson(SERVER_URL + "/api/privacy/hide", body, token);
                 if (r.code == 401) {
-                    clearToken();
+                    clearToken(phone);
                     token = issueNewToken(phone, telegramId);
                     r = (token != null)
                             ? postJson(SERVER_URL + "/api/privacy/hide", body, token)
@@ -800,7 +871,7 @@ public class AskanFilter {
 
                 HttpResult r = postJson(SERVER_URL + "/api/requests/privacy", body, token);
                 if (r.code == 401) {
-                    clearToken();
+                    clearToken(phone);
                     token = issueNewToken(phone, telegramId);
                     r = (token != null)
                             ? postJson(SERVER_URL + "/api/requests/privacy", body, token)
@@ -987,7 +1058,7 @@ public class AskanFilter {
 
         new Thread(() -> {
             try {
-                String token = deviceToken != null ? deviceToken : acquireToken(phone, telegramId);
+                String token = acquireToken(phone, telegramId);
                 if (token == null) { FileLog.e("AskanFilter: reportVpnApps — no token"); return; }
 
                 JSONObject body = new JSONObject();
@@ -995,7 +1066,7 @@ public class AskanFilter {
 
                 HttpResult r = postJson(SERVER_URL + "/api/report", body, token);
                 if (r.code == 401) {
-                    clearToken();
+                    clearToken(phone);
                     token = issueNewToken(phone, telegramId);
                     if (token != null) r = postJson(SERVER_URL + "/api/report", body, token);
                 }

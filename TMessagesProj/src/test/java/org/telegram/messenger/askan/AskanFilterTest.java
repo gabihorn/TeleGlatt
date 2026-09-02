@@ -83,13 +83,17 @@ public class AskanFilterTest {
     }
 
     // ── invariant #1: case-insensitive matching ───────────────────────────────
+    // Exercised through isExplicitlyAllowed, which is the method the app actually
+    // calls. The older isChannelAllowed has no production caller, so R8 strips it
+    // from the runtime jar and the test died with NoSuchMethodError while still
+    // compiling fine — a green-looking assertion about code that never shipped.
     @Test
     public void allowList_isCaseInsensitive() throws Exception {
         seed("globalAllow", "technews"); // server stores lowercased
-        assertTrue(filter.isChannelAllowed("@TechNews"));
-        assertTrue(filter.isChannelAllowed("TechNews"));
-        assertTrue(filter.isChannelAllowed("technews"));
-        assertFalse(filter.isChannelAllowed("othernews"));
+        assertTrue(filter.isExplicitlyAllowed("100", "@TechNews"));
+        assertTrue(filter.isExplicitlyAllowed("100", "TechNews"));
+        assertTrue(filter.isExplicitlyAllowed("100", "technews"));
+        assertFalse(filter.isExplicitlyAllowed("100", "othernews"));
     }
 
     @Test
