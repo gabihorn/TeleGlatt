@@ -6901,7 +6901,17 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         // Refresh Askan permissions — at top to avoid any early-return misses below
         if (!onlySelect && folderId == 0) {
             long now = System.currentTimeMillis();
-            if (now - org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch > 5 * 60 * 1000L) {
+            // The 5-minute throttle must not apply when the active account changed:
+            // the permission cache is global, so on a device with two numbers the
+            // second account would otherwise run on the first one's grants until the
+            // throttle expired — opening a personally-approved channel to the wrong
+            // number. A phone mismatch forces an immediate refetch.
+            TLRPC.User active = getUserConfig().getCurrentUser();
+            boolean accountChanged = active != null
+                    && !org.telegram.messenger.askan.AskanFilter.getInstance()
+                            .isCacheForPhone(active.phone);
+            if (accountChanged
+                    || now - org.telegram.messenger.askan.AskanFilter.lastPermissionsFetch > 5 * 60 * 1000L) {
                 // NOTE: the throttle timestamp is armed by fetchPermissions ONLY after a
                 // successful parseAndSave — not here. Arming it before the request meant a
                 // failed/empty fetch (transient network, or the server-side empty-lists bug)
