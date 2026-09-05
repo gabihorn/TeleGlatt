@@ -18,8 +18,8 @@ import com.android.billingclient.api.BillingClientStateListener;
 import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
 import com.android.billingclient.api.ConsumeParams;
+import com.android.billingclient.api.PendingPurchasesParams;
 import com.android.billingclient.api.ProductDetails;
-import com.android.billingclient.api.ProductDetailsResponseListener;
 import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.PurchasesResponseListener;
 import com.android.billingclient.api.PurchasesUpdatedListener;
@@ -79,13 +79,7 @@ public class BillingController implements PurchasesUpdatedListener, BillingClien
 
     private BillingController(Context ctx) {
         billingClient = BillingClient.newBuilder(ctx)
-                // Billing 8 made the no-arg overload unavailable; pending purchases
-                // must now be opted into explicitly per product type. One-time
-                // products match the previous no-arg behaviour.
-                .enablePendingPurchases(
-                        com.android.billingclient.api.PendingPurchasesParams.newBuilder()
-                                .enableOneTimeProducts()
-                                .build())
+                .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
                 .setListener(this)
                 .build();
     }
@@ -166,7 +160,7 @@ public class BillingController implements PurchasesUpdatedListener, BillingClien
             return;
         }
         billingClientEmpty = true;
-        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.billingProductDetailsUpdated);
+        NotificationCenter.getGlobalInstance().postNotificationNameOnUIThread(NotificationCenter.billingProductDetailsUpdated);
     }
 
     private void switchBackFromInvoice() {
@@ -174,39 +168,23 @@ public class BillingController implements PurchasesUpdatedListener, BillingClien
             return;
         }
         billingClientEmpty = false;
-        NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.billingProductDetailsUpdated);
+        NotificationCenter.getGlobalInstance().postNotificationNameOnUIThread(NotificationCenter.billingProductDetailsUpdated);
     }
 
     public boolean isReady() {
         return billingClient.isReady();
     }
 
-    /**
-     * Callback shape this app has always used: (result, List&lt;ProductDetails&gt;).
-     *
-     * Billing 8 changed ProductDetailsResponseListener's second argument from
-     * List&lt;ProductDetails&gt; to QueryProductDetailsResult. Every caller here passes
-     * a lambda whose parameter type is inferred from this signature, so keeping our
-     * own interface and unwrapping in one place leaves all five call sites
-     * (StarsController, BoostRepository, GiftSheet, LoginActivity,
-     * GiftPremiumBottomSheet) untouched — and keeps the diff against upstream small
-     * for future rebases.
-     */
-    public interface ProductDetailsListListener {
-        void onProductDetails(BillingResult result, List<ProductDetails> list);
+    public interface ProductDetailsResponseListenerLegacy {
+        void onProductDetailsResponse(BillingResult billingResult, List<ProductDetails> list);
     }
 
-    public void queryProductDetails(List<QueryProductDetailsParams.Product> products, ProductDetailsListListener responseListener) {
+    public void queryProductDetails(List<QueryProductDetailsParams.Product> products, ProductDetailsResponseListenerLegacy responseListener) {
         if (!isReady()) {
             throw new IllegalStateException("Billing: Controller should be ready for this call!");
         }
-        billingClient.queryProductDetailsAsync(
-            QueryProductDetailsParams.newBuilder().setProductList(products).build(),
-            (billingResult, queryResult) -> responseListener.onProductDetails(
-                billingResult,
-                queryResult == null ? Collections.emptyList() : queryResult.getProductDetailsList()
-            )
-        );
+        billingClient.queryProductDetailsAsync(QueryProductDetailsParams.newBuilder().setProductList(products).build(), (billingResult, queryProductDetailsResult) ->
+            responseListener.onProductDetailsResponse(billingResult, queryProductDetailsResult.getProductDetailsList()));
     }
 
     /**
