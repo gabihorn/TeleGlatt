@@ -24,6 +24,17 @@ else()
     enable_language(ASM_NASM)
 endif()
 
+# 16KB page alignment, kept global rather than per-target. Play rejects any
+# 64-bit .so whose LOAD segments are aligned to 4KB, and the per-target flags
+# further down cover only ${NATIVE_LIB}. On this 12.9.2 base that is the sole
+# shared library, so nothing needs it yet — it is carried over from 2.0.8,
+# where the 12.10.1 base split libyuv into its own shared library, that library
+# never saw the per-target flags, shipped at 0x1000 and was rejected by Play.
+# Setting it here means the next third-party library to arrive is aligned by
+# default instead of failing an upload.
+set(CMAKE_SHARED_LINKER_FLAGS
+        "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384")
+
 add_library(avutil STATIC IMPORTED)
 set_target_properties(avutil PROPERTIES IMPORTED_LOCATION ${CMAKE_HOME_DIRECTORY}/ffmpeg/${ANDROID_ABI}/libavutil.a)
 
