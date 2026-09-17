@@ -317,7 +317,7 @@ public class AskanUiHelper {
             }
 
             // Persist subject type so notification text can be entity-specific
-            ctx.getSharedPreferences("askan_req_statuses", Context.MODE_PRIVATE)
+            AskanFilter.reqStatusPrefs(ctx)
                .edit().putString("subj_" + chatUsername, subject).apply();
 
             sendBtn.setText("שולח...");
@@ -366,14 +366,25 @@ public class AskanUiHelper {
     /** Persists a local "request pending" flag so the blocked dialog can reflect it on reopen. */
     private static void markPending(Context ctx, String chatUsername) {
         if (chatUsername == null || chatUsername.isEmpty()) return;
-        ctx.getSharedPreferences("askan_req_statuses", Context.MODE_PRIVATE)
+        AskanFilter.reqStatusPrefs(ctx)
            .edit().putBoolean("pending_" + chatUsername, true).apply();
     }
 
     /** True if a request for this chat is locally marked as pending (cleared on approve/reject). */
     public static boolean isLocallyPending(Context ctx, String chatUsername) {
         if (chatUsername == null || chatUsername.isEmpty()) return false;
-        return ctx.getSharedPreferences("askan_req_statuses", Context.MODE_PRIVATE)
-                  .getBoolean("pending_" + chatUsername, false);
+        if (!AskanFilter.reqStatusPrefs(ctx).getBoolean("pending_" + chatUsername, false)) {
+            return false;
+        }
+        // A chat that is already allowed cannot still be pending. The flag is normally
+        // cleared by checkRequestStatusChanges, but that only fires when it catches the
+        // pending -> approved transition; if the app was killed in between, the flag
+        // would otherwise stick forever and keep showing "under review" on a chat the
+        // user can already open. Drop it here instead of trusting the transition.
+        if (AskanFilter.getInstance().isExplicitlyAllowed(chatUsername, chatUsername)) {
+            AskanFilter.reqStatusPrefs(ctx).edit().remove("pending_" + chatUsername).apply();
+            return false;
+        }
+        return true;
     }
 }
