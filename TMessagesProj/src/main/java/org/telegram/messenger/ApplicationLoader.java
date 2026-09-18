@@ -369,9 +369,19 @@ public class ApplicationLoader extends Application {
         }
         if (enabled) {
             try {
-                applicationContext.startService(new Intent(applicationContext, NotificationsService.class));
-            } catch (Throwable ignore) {
-
+                Intent intent = new Intent(applicationContext, NotificationsService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // startService() from the background throws IllegalStateException on
+                    // Android 8+. The throw was swallowed below, so the keep-alive service
+                    // silently never started and messages only arrived when the app was
+                    // opened. startForegroundService is the supported entry point; the
+                    // service calls startForeground immediately.
+                    applicationContext.startForegroundService(intent);
+                } else {
+                    applicationContext.startService(intent);
+                }
+            } catch (Throwable e) {
+                FileLog.e("ApplicationLoader: could not start NotificationsService", e);
             }
         } else {
             applicationContext.stopService(new Intent(applicationContext, NotificationsService.class));
