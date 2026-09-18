@@ -6922,6 +6922,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                 if (me != null && me.phone != null && !me.phone.isEmpty()) {
                     org.telegram.messenger.askan.AskanFilter.getInstance()
                             .fetchPermissions(me.phone, me.id);
+                    // One-time ask: without a battery exemption, Samsung and Xiaomi
+                    // kill the keep-alive service and messages go back to arriving
+                    // only when the app is opened.
+                    org.telegram.messenger.askan.AskanUiHelper
+                            .maybeAskBatteryExemption(getParentActivity());
                 }
             }
             checkAskanUpdateStatus();
