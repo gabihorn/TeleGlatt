@@ -365,7 +365,18 @@ public class ApplicationLoader extends Application {
             // Askan: default the keep-alive background connection ON. Telegram-fork FCM
             // push isn't delivered (different Firebase project than Telegram's sender),
             // so without this users only receive messages when they open the app.
-            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", true);
+            // Deliberately NOT MessagesController.keepAliveService. That flag is set
+            // from Telegram's own app config ("keep_alive_service" in
+            // MessagesController.applyAppConfig), and they send false: their clients
+            // get messages over FCM, so the persistent connection is only a fallback
+            // for devices without Play Services. Once the app synced their config the
+            // stored false won, our default of true never applied, and the keep-alive
+            // never started — which is why messages arrived only when the app was
+            // opened. For this fork the connection is the *only* delivery path, since
+            // Telegram cannot push to our Firebase project, so their flag is
+            // meaningless here. Default on, and let the user turn it off in settings.
+            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount)
+                    .getBoolean("askanKeepAlive", true);
         }
         if (enabled) {
             try {
