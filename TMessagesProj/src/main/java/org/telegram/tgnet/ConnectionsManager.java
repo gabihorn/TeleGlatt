@@ -439,6 +439,16 @@ public class ConnectionsManager extends BaseController {
             if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked app web view request");
             return;
         }
+        // Sticker and emoji search query Telegram's global index by free text and
+        // return whatever it holds — the same uncontrolled-content hole as the
+        // inline bots (@pic, @gif) blocked above, just through a different call.
+        // Packs the user already has are unaffected: those are served from local
+        // storage and never reach this path.
+        if (object instanceof TLRPC.TL_messages_searchStickers
+                || object instanceof TLRPC.TL_messages_searchCustomEmoji) {
+            if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked sticker/emoji search");
+            return;
+        }
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("send request " + object + " with token = " + requestToken);
         }
