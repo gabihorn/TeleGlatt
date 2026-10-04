@@ -657,7 +657,7 @@ public class AskanFilter {
                 // no MessagesController (unit tests) — stay fail-closed
             }
         }
-        return isExplicitlyAllowed(idStr, username);
+        return isExplicitlyAllowed(idStr, username) || matchesGlobalBotPattern(norm(username));
     }
 
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
@@ -1140,6 +1140,33 @@ public class AskanFilter {
         return s.toLowerCase();
     }
 
+    /**
+     * Bot username patterns on the GLOBAL allow list, e.g. "drivebot_*_bot": services
+     * like DriveBot give every user a personal bot with a random middle part, so they
+     * cannot be listed one by one. Bots only — channels and groups never match a
+     * pattern. '*' matches any run of characters; an entry without '*' is not a pattern.
+     */
+    private boolean matchesGlobalBotPattern(String uname) {
+        if (uname == null) return false;
+        for (String entry : globalAllow) {
+            if (entry.indexOf('*') >= 0 && globMatches(entry, uname)) return true;
+        }
+        return false;
+    }
+
+    static boolean globMatches(String pattern, String text) {
+        String[] parts = pattern.split("\\*", -1);
+        if (!text.startsWith(parts[0])) return false;
+        int pos = parts[0].length();
+        for (int i = 1; i < parts.length - 1; i++) {
+            int at = text.indexOf(parts[i], pos);
+            if (at < 0) return false;
+            pos = at + parts[i].length();
+        }
+        String last = parts[parts.length - 1];
+        return text.length() - pos >= last.length() && text.endsWith(last);
+    }
+
     // ─── Central block checks ─────────────────────────────────────────────────
 
     /**
@@ -1247,7 +1274,8 @@ public class AskanFilter {
         if (!user.bot) return false;
         recordIdMapping(idStr, uname); // lets id-only requests (inline, web views) resolve it
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
-                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
+                || matchesGlobalBotPattern(uname);
         return !allowed;
     }
 
@@ -1282,7 +1310,8 @@ public class AskanFilter {
             return BlockReason.EXPLICIT;
         if (!user.bot) return BlockReason.NOT_BLOCKED;
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
-                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
+                || matchesGlobalBotPattern(uname);
         return allowed ? BlockReason.NOT_BLOCKED : BlockReason.NOT_APPROVED;
     }
 }

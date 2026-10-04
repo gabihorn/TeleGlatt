@@ -193,6 +193,41 @@ public class AskanFilterTest {
         assertFalse(filter.isInlineBotAllowed(input));
     }
 
+    // Global bot patterns: personal per-user bots with a random middle (DriveBot).
+    @Test
+    public void globalBotPattern_allowsMatchingBots() throws Exception {
+        // "*bot", not "*_bot": one real DriveBot username is drivebot_evzfup_12bot.
+        seed("globalAllow", "drivebot_*bot");
+        assertFalse(filter.isUserBlocked(user(9000, "DriveBot_v3g3kr_bot", true)));
+        assertFalse(filter.isUserBlocked(user(9001, "drivebot_evzfup_12bot", true)));
+        TLRPC.TL_inputUser input = new TLRPC.TL_inputUser();
+        input.user_id = 9000;
+        assertTrue(filter.isInlineBotAllowed(input));
+    }
+
+    @Test
+    public void globalBotPattern_rejectsNonMatchingBots() throws Exception {
+        seed("globalAllow", "drivebot_*_bot");
+        assertTrue(filter.isUserBlocked(user(9002, "otherbot", true)));
+        assertTrue(filter.isUserBlocked(user(9003, "drivebot_x", true)));
+        assertTrue(filter.isUserBlocked(user(9004, "mydrivebot_x_bot", true)));
+    }
+
+    @Test
+    public void globalBotPattern_neverAppliesToChannels() throws Exception {
+        seed("globalAllow", "drivebot_*_bot");
+        assertTrue(filter.isChatBlocked(channel(9100, "drivebot_news_bot"), null));
+    }
+
+    @Test
+    public void globMatches_basics() {
+        assertTrue(AskanFilter.globMatches("drivebot_*_bot", "drivebot_abc_bot"));
+        assertTrue(AskanFilter.globMatches("drivebot_*bot", "drivebot_evzfup_12bot"));
+        assertFalse(AskanFilter.globMatches("drivebot_*_bot", "drivebot_bot"));
+        assertFalse(AskanFilter.globMatches("drivebot_*_bot", "xdrivebot_a_bot"));
+        assertTrue(AskanFilter.globMatches("a*", "a"));
+    }
+
     @Test
     public void explicitlyBlockedUser_isBlocked() throws Exception {
         seed("blockedChats", "700");
