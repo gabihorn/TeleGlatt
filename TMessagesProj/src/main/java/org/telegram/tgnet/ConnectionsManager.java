@@ -436,9 +436,19 @@ public class ConnectionsManager extends BaseController {
                 return;
             }
         }
+        // A bot's main mini app ("Open App" on its profile) — same hole, separate call.
+        if (object instanceof TLRPC.TL_messages_requestMainWebView) {
+            if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(((TLRPC.TL_messages_requestMainWebView) object).bot)) {
+                if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked main web view request");
+                return;
+            }
+        }
         // requestAppWebView identifies the target as an InputBotApp, not an InputUser,
-        // so there is no bot to check against the allow list — denied outright.
-        if (object instanceof TLRPC.TL_messages_requestAppWebView) {
+        // and requestChatJoinWebView (a join-verification page run by a group's bot)
+        // carries only a query_id — no bot to check against the allow list in either,
+        // so both are denied outright.
+        if (object instanceof TLRPC.TL_messages_requestAppWebView
+                || object instanceof TLRPC.TL_messages_requestChatJoinWebView) {
             if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked app web view request");
             return;
         }
