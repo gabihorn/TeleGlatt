@@ -174,6 +174,25 @@ public class AskanFilterTest {
         assertFalse(filter.isUserBlocked(user(600, "OkBot", true)));
     }
 
+    // Approvals are stored by username; inline and web-view requests carry only the id.
+    @Test
+    public void botApprovedByUsername_allowsIdOnlyRequestOnceSeen() throws Exception {
+        seed("userAllow", "drivebot_v3g3kr_bot");
+        TLRPC.TL_inputUser input = new TLRPC.TL_inputUser();
+        input.user_id = 8800;
+        assertFalse("unresolvable id stays fail-closed", filter.isInlineBotAllowed(input));
+        filter.isUserBlocked(user(8800, "DriveBot_v3g3kr_bot", true));
+        assertTrue(filter.isInlineBotAllowed(input));
+    }
+
+    @Test
+    public void unapprovedBot_staysDeniedForIdOnlyRequest() throws Exception {
+        TLRPC.TL_inputUser input = new TLRPC.TL_inputUser();
+        input.user_id = 8801;
+        filter.isUserBlocked(user(8801, "drivebot_other_bot", true));
+        assertFalse(filter.isInlineBotAllowed(input));
+    }
+
     @Test
     public void explicitlyBlockedUser_isBlocked() throws Exception {
         seed("blockedChats", "700");

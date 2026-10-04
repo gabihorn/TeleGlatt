@@ -640,8 +640,24 @@ public class AskanFilter {
             return false; // inputUserSelf / inputUserEmpty / unknown — not a usable bot
         }
         if (id == 0) return false;
-        String username = usernameById.get(String.valueOf(id));
-        return isExplicitlyAllowed(String.valueOf(id), username);
+        String idStr = String.valueOf(id);
+        String username = usernameById.get(idStr);
+        if (username == null) {
+            // Approvals are stored by username, but these requests carry only the bot's
+            // numeric id, and the persisted map is filled from chats, not bots. Without
+            // this an approved bot (e.g. a personal @drivebot_xxxxxx_bot) still failed.
+            try {
+                TLRPC.User user = org.telegram.messenger.MessagesController
+                        .getInstance(UserConfig.selectedAccount).getUser(id);
+                if (user != null) {
+                    username = norm(user.username);
+                    recordIdMapping(idStr, username);
+                }
+            } catch (Throwable ignore) {
+                // no MessagesController (unit tests) — stay fail-closed
+            }
+        }
+        return isExplicitlyAllowed(idStr, username);
     }
 
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
@@ -1229,6 +1245,7 @@ public class AskanFilter {
             return true;
 
         if (!user.bot) return false;
+        recordIdMapping(idStr, uname); // lets id-only requests (inline, web views) resolve it
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
                 || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
         return !allowed;
