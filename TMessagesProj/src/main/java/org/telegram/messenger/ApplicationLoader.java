@@ -37,6 +37,7 @@ import com.google.android.gms.common.GooglePlayServicesUtil;
 
 import org.json.JSONObject;
 import org.telegram.messenger.askan.AskanFilter;
+import org.telegram.messenger.utils.Choreographer60FpsContent;
 import org.telegram.messenger.voip.VideoCapturerDevice;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
@@ -362,7 +363,14 @@ public class ApplicationLoader extends Application {
         ProxyRotationController.init();
 
         AskanFilter.getInstance().loadFromCache();
+        //if (BuildConfig.DEBUG_PRIVATE_VERSION) {
+        //    Choreographer60FpsContent.getInstance().addFrameCallback(debugEverySecondChecks, 1);
+        //}
     }
+
+    private final Runnable debugEverySecondChecks = () -> AndroidUtilities.runOnUIThread(() -> {
+        NotificationCenter.sanitize();
+    });
 
     public static void startPushService() {
         SharedPreferences preferences = MessagesController.getGlobalNotificationsSettings();
@@ -373,13 +381,34 @@ public class ApplicationLoader extends Application {
             // Askan: default the keep-alive background connection ON. Telegram-fork FCM
             // push isn't delivered (different Firebase project than Telegram's sender),
             // so without this users only receive messages when they open the app.
-            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", true);
+            // Deliberately NOT MessagesController.keepAliveService. That flag is set
+            // from Telegram's own app config ("keep_alive_service" in
+            // MessagesController.applyAppConfig), and they send false: their clients
+            // get messages over FCM, so the persistent connection is only a fallback
+            // for devices without Play Services. Once the app synced their config the
+            // stored false won, our default of true never applied, and the keep-alive
+            // never started — which is why messages arrived only when the app was
+            // opened. For this fork the connection is the *only* delivery path, since
+            // Telegram cannot push to our Firebase project, so their flag is
+            // meaningless here. Default on, and let the user turn it off in settings.
+            enabled = MessagesController.getMainSettings(UserConfig.selectedAccount)
+                    .getBoolean("askanKeepAlive", true);
         }
         if (enabled) {
             try {
-                applicationContext.startService(new Intent(applicationContext, NotificationsService.class));
-            } catch (Throwable ignore) {
-
+                Intent intent = new Intent(applicationContext, NotificationsService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // startService() from the background throws IllegalStateException on
+                    // Android 8+. The throw was swallowed below, so the keep-alive service
+                    // silently never started and messages only arrived when the app was
+                    // opened. startForegroundService is the supported entry point; the
+                    // service calls startForeground immediately.
+                    applicationContext.startForegroundService(intent);
+                } else {
+                    applicationContext.startService(intent);
+                }
+            } catch (Throwable e) {
+                FileLog.e("ApplicationLoader: could not start NotificationsService", e);
             }
         } else {
             applicationContext.stopService(new Intent(applicationContext, NotificationsService.class));

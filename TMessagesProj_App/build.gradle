@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.telegram.build-app-plugin'
 
 repositories {
     mavenCentral()
@@ -41,6 +42,11 @@ android {
         coreLibraryDesugaringEnabled true
     }
 
+    androidResources {
+        noCompress += "pack"
+        localeFilters += ["zz"]
+    }
+
     signingConfigs {
         debug {
             storeFile rootProject.file(RELEASE_STORE_FILE)
@@ -66,24 +72,19 @@ android {
             minifyEnabled false
             shrinkResources false
             multiDexEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), '../TMessagesProj/proguard-rules.pro', '../TMessagesProj/proguard-rules-beta.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), '../TMessagesProj/proguard-rules.pro'
             ndk.debugSymbolLevel = 'FULL'
         }
 
         standalone {
-            // The jlatexmath module upstream added in 12.10 only declares debug/release,
-            // so our extra 'standalone' build type has nothing to resolve against and the
-            // build fails with "No matching variant of project :jlatexmath". Fall back to
-            // release for any dependency that does not define standalone itself.
-            matchingFallbacks = ['release']
             debuggable false
             jniDebuggable false
             signingConfig signingConfigs.release
             applicationIdSuffix ".web"
             minifyEnabled true
-            shrinkResources false
+            shrinkResources true
             multiDexEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), '../TMessagesProj/proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), '../TMessagesProj/proguard-rules.pro'
             ndk.debugSymbolLevel = 'FULL'
         }
 
@@ -92,9 +93,9 @@ android {
             jniDebuggable false
             signingConfig signingConfigs.release
             minifyEnabled true
-            shrinkResources false
+            shrinkResources true
             multiDexEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), '../TMessagesProj/proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), '../TMessagesProj/proguard-rules.pro'
             ndk.debugSymbolLevel = 'FULL'
         }
     }
@@ -209,8 +210,9 @@ android {
 
         externalNativeBuild {
             cmake {
-                version '3.10.2'
+                version '3.22.1'
                 arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-21' // , '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
+                targets 'tmessages.49'
             }
         }
     }

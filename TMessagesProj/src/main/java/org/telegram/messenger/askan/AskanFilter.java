@@ -640,8 +640,24 @@ public class AskanFilter {
             return false; // inputUserSelf / inputUserEmpty / unknown — not a usable bot
         }
         if (id == 0) return false;
-        String username = usernameById.get(String.valueOf(id));
-        return isExplicitlyAllowed(String.valueOf(id), username);
+        String idStr = String.valueOf(id);
+        String username = usernameById.get(idStr);
+        if (username == null) {
+            // Approvals are stored by username, but these requests carry only the bot's
+            // numeric id, and the persisted map is filled from chats, not bots. Without
+            // this an approved bot (e.g. a personal @drivebot_xxxxxx_bot) still failed.
+            try {
+                TLRPC.User user = org.telegram.messenger.MessagesController
+                        .getInstance(UserConfig.selectedAccount).getUser(id);
+                if (user != null) {
+                    username = norm(user.username);
+                    recordIdMapping(idStr, username);
+                }
+            } catch (Throwable ignore) {
+                // no MessagesController (unit tests) — stay fail-closed
+            }
+        }
+        return isExplicitlyAllowed(idStr, username) || matchesGlobalBotPattern(norm(username));
     }
 
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
@@ -893,12 +909,48 @@ public class AskanFilter {
     // ─── Request status polling — in-app notifications ────────────────────────
 
     private static final String PREFS_REQ_STATUSES = "askan_req_statuses";
+
+    /**
+     * Request-status store for one phone number.
+     *
+     * This used to be a single store keyed only by chat username, shared by every
+     * account on the device. On a two-number device that meant account A's
+     * "pending_<chat>" flag was read by account B, which then showed "your request
+     * is under review" for a request it had never sent — and the flag could never
+     * clear, because checkRequestStatusChanges only clears flags for requests that
+     * appear in the *active* account's /mine list. One customer sat on a permanent
+     * false "under review" for a bot that was already approved for both accounts.
+     *
+     * There is deliberately no migration off the old store: leaving it behind drops
+     * the stale flags, which is exactly what the affected devices need. A request
+     * that really is pending re-marks itself the next time the user taps through,
+     * since the server answers already_pending.
+     */
+    public static String reqStatusPrefsName(String phone) {
+        return PREFS_REQ_STATUSES + "_" + (phone != null ? phone : "");
+    }
+
+    /** Phone of the account currently selected in the UI, or null. */
+    public static String activePhone() {
+        try {
+            TLRPC.User me = UserConfig.getInstance(UserConfig.selectedAccount).getCurrentUser();
+            if (me != null && me.phone != null && !me.phone.isEmpty()) return me.phone;
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /** Request-status store for the account currently selected in the UI. */
+    public static SharedPreferences reqStatusPrefs(Context ctx) {
+        return ctx.getSharedPreferences(reqStatusPrefsName(activePhone()), Context.MODE_PRIVATE);
+    }
     private static final String NOTIF_CHANNEL_ASKAN = "askan_requests";
 
     public void checkRequestStatusChanges(String phone, long telegramId) {
         fetchMyRequests(phone, telegramId, requests -> {
+            // Scoped to the phone this poll is for, not to whichever account happens
+            // to be selected — fetchMyRequests returned that phone's requests.
             SharedPreferences prefs = ApplicationLoader.applicationContext
-                    .getSharedPreferences(PREFS_REQ_STATUSES, Context.MODE_PRIVATE);
+                    .getSharedPreferences(reqStatusPrefsName(phone), Context.MODE_PRIVATE);
             SharedPreferences.Editor editor = prefs.edit();
 
             for (RequestInfo req : requests) {
@@ -1088,6 +1140,33 @@ public class AskanFilter {
         return s.toLowerCase();
     }
 
+    /**
+     * Bot username patterns on the GLOBAL allow list, e.g. "drivebot_*_bot": services
+     * like DriveBot give every user a personal bot with a random middle part, so they
+     * cannot be listed one by one. Bots only — channels and groups never match a
+     * pattern. '*' matches any run of characters; an entry without '*' is not a pattern.
+     */
+    private boolean matchesGlobalBotPattern(String uname) {
+        if (uname == null) return false;
+        for (String entry : globalAllow) {
+            if (entry.indexOf('*') >= 0 && globMatches(entry, uname)) return true;
+        }
+        return false;
+    }
+
+    static boolean globMatches(String pattern, String text) {
+        String[] parts = pattern.split("\\*", -1);
+        if (!text.startsWith(parts[0])) return false;
+        int pos = parts[0].length();
+        for (int i = 1; i < parts.length - 1; i++) {
+            int at = text.indexOf(parts[i], pos);
+            if (at < 0) return false;
+            pos = at + parts[i].length();
+        }
+        String last = parts[parts.length - 1];
+        return text.length() - pos >= last.length() && text.endsWith(last);
+    }
+
     // ─── Central block checks ─────────────────────────────────────────────────
 
     /**
@@ -1193,8 +1272,10 @@ public class AskanFilter {
             return true;
 
         if (!user.bot) return false;
+        recordIdMapping(idStr, uname); // lets id-only requests (inline, web views) resolve it
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
-                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
+                || matchesGlobalBotPattern(uname);
         return !allowed;
     }
 
@@ -1229,7 +1310,8 @@ public class AskanFilter {
             return BlockReason.EXPLICIT;
         if (!user.bot) return BlockReason.NOT_BLOCKED;
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
-                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+                || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
+                || matchesGlobalBotPattern(uname);
         return allowed ? BlockReason.NOT_BLOCKED : BlockReason.NOT_APPROVED;
     }
 }

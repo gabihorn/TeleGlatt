@@ -551,7 +551,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                             Context parentCtx = getParentActivity();
                             if (parentCtx == null) return;
                             String chatName2 = (item.chatName != null && !item.chatName.isEmpty()) ? item.chatName : item.chatUsername;
-                            String savedSubject = parentCtx.getSharedPreferences("askan_req_statuses", Context.MODE_PRIVATE)
+                            String savedSubject = org.telegram.messenger.askan.AskanFilter.reqStatusPrefs(parentCtx)
                                     .getString("subj_" + item.chatUsername, "ערוץ");
                             AskanUiHelper.showAccessRequestNoteDialog(parentCtx, currentAccount,
                                     item.chatUsername, chatName2, savedSubject,

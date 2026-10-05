@@ -3,9 +3,14 @@ package org.telegram.messenger.askan;
 import static org.telegram.messenger.AndroidUtilities.dp;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -16,8 +21,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import org.telegram.messenger.ChatObject;
+import org.telegram.messenger.FileLog;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BottomSheet;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AvatarDrawable;
@@ -317,7 +324,7 @@ public class AskanUiHelper {
             }
 
             // Persist subject type so notification text can be entity-specific
-            ctx.getSharedPreferences("askan_req_statuses", Context.MODE_PRIVATE)
+            AskanFilter.reqStatusPrefs(ctx)
                .edit().putString("subj_" + chatUsername, subject).apply();
 
             sendBtn.setText("שולח...");
@@ -366,14 +373,78 @@ public class AskanUiHelper {
     /** Persists a local "request pending" flag so the blocked dialog can reflect it on reopen. */
     private static void markPending(Context ctx, String chatUsername) {
         if (chatUsername == null || chatUsername.isEmpty()) return;
-        ctx.getSharedPreferences("askan_req_statuses", Context.MODE_PRIVATE)
+        AskanFilter.reqStatusPrefs(ctx)
            .edit().putBoolean("pending_" + chatUsername, true).apply();
     }
 
     /** True if a request for this chat is locally marked as pending (cleared on approve/reject). */
     public static boolean isLocallyPending(Context ctx, String chatUsername) {
         if (chatUsername == null || chatUsername.isEmpty()) return false;
-        return ctx.getSharedPreferences("askan_req_statuses", Context.MODE_PRIVATE)
-                  .getBoolean("pending_" + chatUsername, false);
+        if (!AskanFilter.reqStatusPrefs(ctx).getBoolean("pending_" + chatUsername, false)) {
+            return false;
+        }
+        // A chat that is already allowed cannot still be pending. The flag is normally
+        // cleared by checkRequestStatusChanges, but that only fires when it catches the
+        // pending -> approved transition; if the app was killed in between, the flag
+        // would otherwise stick forever and keep showing "under review" on a chat the
+        // user can already open. Drop it here instead of trusting the transition.
+        if (AskanFilter.getInstance().isExplicitlyAllowed(chatUsername, chatUsername)) {
+            AskanFilter.reqStatusPrefs(ctx).edit().remove("pending_" + chatUsername).apply();
+            return false;
+        }
+        return true;
+    }
+
+    // ─── Battery optimisation ─────────────────────────────────────────────────
+
+    /**
+     * Asks the user once to exempt TeleGlatt from battery optimisation.
+     *
+     * The keep-alive foreground service is our only way to deliver messages while
+     * the app is closed — Telegram cannot push to our Firebase project — and the
+     * aggressive power managers on Samsung and Xiaomi kill even a well-behaved
+     * foreground service unless the app is exempt.
+     *
+     * Deliberately opens the system list (ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+     * rather than the one-tap ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS dialog.
+     * The one-tap version needs the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission,
+     * which Play treats as sensitive and gates behind a declaration review. A couple
+     * of extra taps is not worth risking the listing over.
+     *
+     * Shown at most once; "later" is remembered as a no.
+     */
+    public static void maybeAskBatteryExemption(Context ctx) {
+        if (ctx == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        SharedPreferences prefs = ctx.getSharedPreferences("askan_filter", Context.MODE_PRIVATE);
+        if (prefs.getBoolean("battery_prompt_shown", false)) return;
+
+        try {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            if (pm != null && pm.isIgnoringBatteryOptimizations(ctx.getPackageName())) {
+                // Already exempt — nothing to ask, and don't ask later either.
+                prefs.edit().putBoolean("battery_prompt_shown", true).apply();
+                return;
+            }
+        } catch (Exception ignored) {
+            return;
+        }
+
+        prefs.edit().putBoolean("battery_prompt_shown", true).apply();
+
+        new AlertDialog.Builder(ctx)
+                .setTitle("כדי לקבל הודעות בזמן")
+                .setMessage("אנדרואיד עלולה לעצור את TeleGlatt ברקע, ואז הודעות יגיעו רק כשתפתחו את האפליקציה.\n\n"
+                        + "במסך שייפתח: בחרו \"הכל\" ברשימה למעלה, אתרו את TeleGlatt, ובחרו \"ללא אופטימיזציה\".")
+                .setPositiveButton("פתיחת ההגדרות", (d, w) -> {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        ctx.startActivity(intent);
+                    } catch (Exception e) {
+                        FileLog.e("AskanUiHelper: battery settings unavailable", e);
+                    }
+                })
+                .setNegativeButton("לא עכשיו", null)
+                .show();
     }
 }
