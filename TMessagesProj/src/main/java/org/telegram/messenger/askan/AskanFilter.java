@@ -58,6 +58,11 @@ public class AskanFilter {
     // Persisted map: numericId → username, built opportunistically when TLRPC.Chat is available.
     // Used by isExplicitlyAllowedById in FCM cold-start to resolve username from numeric ID.
     private final HashMap<String, String> usernameById = new HashMap<>();
+    // Persisted map: managed bot id → id of the bot that manages it (userFull.bot_manager_id,
+    // set by Telegram, so it cannot be faked by naming a bot after a trusted one).
+    private final HashMap<String, String> managerByBotId = new HashMap<>();
+    // Bots whose full profile was already requested this session, to learn their manager.
+    private final Set<Long> managerLookupRequested = new HashSet<>();
 
     // Device token — persisted across sessions. Issued via POST /api/auth/device.
     // Stored per-phone in SharedPreferences under tokenKey(phone); deviceToken is
@@ -803,6 +808,15 @@ public class AskanFilter {
                 Set<String> bc = prefs.getStringSet("blocked_chats", null);
                 blockedChats.clear(); if (bc != null) for (String e : bc) blockedChats.add(norm(e));
 
+                Set<String> mgrSet = prefs.getStringSet("bot_manager_map", null);
+                managerByBotId.clear();
+                if (mgrSet != null) {
+                    for (String entry : mgrSet) {
+                        int sep = entry.indexOf('|');
+                        if (sep > 0) managerByBotId.put(entry.substring(0, sep), entry.substring(sep + 1));
+                    }
+                }
+
                 Set<String> idMapSet = prefs.getStringSet("id_username_map", null);
                 usernameById.clear();
                 if (idMapSet != null) {
@@ -905,7 +919,8 @@ public class AskanFilter {
                 // no MessagesController (unit tests) — stay fail-closed
             }
         }
-        return isExplicitlyAllowed(idStr, username) || matchesGlobalBotPattern(norm(username));
+        return isExplicitlyAllowed(idStr, username) || matchesGlobalBotPattern(norm(username))
+                || isManagedByTrustedBot(id, null);
     }
 
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
@@ -1533,8 +1548,55 @@ public class AskanFilter {
         recordIdMapping(idStr, uname); // lets id-only requests (inline, web views) resolve it
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
                 || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
-                || matchesGlobalBotPattern(uname);
+                || matchesGlobalBotPattern(uname)
+                || isManagedByTrustedBot(user.id, user);
         return !allowed;
+    }
+
+    /**
+     * Managed bots: Telegram lets a bot have per-user copies created under it
+     * (DriveBot gives every driver one), and records the parent in
+     * userFull.bot_manager_id. A global allow entry "managed_by:<id>" opens every
+     * bot that Telegram says is managed by that bot. Unlike a username pattern this
+     * cannot be spoofed — anyone can register drivebot_xyz_bot, nobody can make
+     * Telegram report a false manager.
+     */
+    private boolean isManagedByTrustedBot(long botId, TLRPC.User user) {
+        String idStr = String.valueOf(botId);
+        String manager = managerByBotId.get(idStr);
+        if (manager == null) {
+            try {
+                int account = UserConfig.selectedAccount;
+                TLRPC.UserFull full = org.telegram.messenger.MessagesController.getInstance(account).getUserFull(botId);
+                if (full != null && full.bot_manager_id != 0) {
+                    recordBotManager(botId, full.bot_manager_id);
+                    manager = String.valueOf(full.bot_manager_id);
+                } else if (full == null && user != null && managerLookupRequested.add(botId)) {
+                    // Not loaded yet: fetch the profile once so the next check knows.
+                    AndroidUtilities.runOnUIThread(() -> {
+                        try {
+                            org.telegram.messenger.MessagesController.getInstance(account).loadFullUser(user, 0, false);
+                        } catch (Exception ignored) {}
+                    });
+                }
+            } catch (Throwable ignored) {
+                // no MessagesController (unit tests) — stay fail-closed
+            }
+        }
+        return manager != null && globalAllow.contains("managed_by:" + manager);
+    }
+
+    /** Remembers which bot manages {@code botId}; persisted so cold checks need no network. */
+    public synchronized void recordBotManager(long botId, long managerId) {
+        if (botId == 0 || managerId == 0) return;
+        String key = String.valueOf(botId), val = String.valueOf(managerId);
+        if (val.equals(managerByBotId.get(key))) return;
+        managerByBotId.put(key, val);
+        if (ApplicationLoader.applicationContext == null) return;
+        Set<String> snapshot = new HashSet<>(managerByBotId.size());
+        for (Map.Entry<String, String> e : managerByBotId.entrySet()) snapshot.add(e.getKey() + "|" + e.getValue());
+        ApplicationLoader.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putStringSet("bot_manager_map", snapshot).apply();
     }
 
     // ─── Block-reason explanation (shown to the user) ─────────────────────────
@@ -1569,7 +1631,8 @@ public class AskanFilter {
         if (!user.bot) return BlockReason.NOT_BLOCKED;
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
                 || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
-                || matchesGlobalBotPattern(uname);
+                || matchesGlobalBotPattern(uname)
+                || isManagedByTrustedBot(user.id, user);
         return allowed ? BlockReason.NOT_BLOCKED : BlockReason.NOT_APPROVED;
     }
 }
