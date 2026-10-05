@@ -352,6 +352,16 @@ public class AskanUiHelper {
                             case "rate_limited":
                                 msg = "שלחת הרבה בקשות בזמן קצר. נסה שוב בעוד כמה דקות";
                                 break;
+                            case "approved": {
+                                // The server already allows it, so the local lists are stale.
+                                // Refresh now instead of waiting for the 5-minute throttle.
+                                AskanFilter.lastPermissionsFetch = 0;
+                                AskanFilter.getInstance().fetchPermissions(phone,
+                                        UserConfig.getInstance(account).getClientUserId());
+                                Toast.makeText(ctx, "הגישה כבר מאושרת. ההרשאות מתעדכנות, נסה לפתוח שוב בעוד רגע", Toast.LENGTH_LONG).show();
+                                sheet.dismiss();
+                                return;
+                            }
                             case "already_pending":
                                 markPending(ctx, chatUsername);
                                 Toast.makeText(ctx, "בקשה קיימת כבר ממתינה לאישור", Toast.LENGTH_LONG).show();
