@@ -50,6 +50,11 @@ public class AskanBlockedChatsActivity extends BaseFragment {
     private static final int TYPE_REQUEST        = 1;
     private static final int TYPE_PRIVACY_TOGGLE = 2;
     private static final int TYPE_BLOCKED_CHAT   = 3;
+    private static final int TYPE_ACTION         = 4;
+
+    private static final int ACTION_COPY_STATUS  = 1;
+    private static final int ACTION_SHARE_REPORT = 2;
+    private static final int ACTION_RECONNECT    = 3;
 
     private static class ListItem {
         final int viewType;
@@ -64,6 +69,8 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         TLRPC.Chat chat;
         TLRPC.User user;
         boolean requestSent;
+        int actionId;
+        String actionTitle, actionSubtitle;
 
         private ListItem(int type) { this.viewType = type; }
 
@@ -86,6 +93,10 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         }
         static ListItem blockedUser(TLRPC.User u) {
             ListItem i = new ListItem(TYPE_BLOCKED_CHAT); i.user = u; return i;
+        }
+        static ListItem action(int id, String title, String subtitle) {
+            ListItem i = new ListItem(TYPE_ACTION);
+            i.actionId = id; i.actionTitle = title; i.actionSubtitle = subtitle; return i;
         }
 
         String displayName() {
@@ -277,7 +288,8 @@ public class AskanBlockedChatsActivity extends BaseFragment {
 
     private void updateStats() {
         if (statPendingNum == null || statBlockedNum == null) return;
-        long pending = myRequests.stream().filter(r -> "pending".equals(r.status)).count();
+        long pending = myRequests.stream().filter(r -> "pending".equals(r.status)).count()
+                + queuedRequests().size();
         long blocked = buildBlockedItems().size();
         statPendingNum.setText(String.valueOf(pending));
         statBlockedNum.setText(String.valueOf(blocked));
@@ -300,15 +312,81 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                     items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget));
             }
         }
+        // Requests saved on the device while the server was unreachable.
+        List<org.json.JSONObject> queued = queuedRequests();
+        if (!queued.isEmpty()) {
+            boolean hasHeader = !items.isEmpty();
+            if (!hasHeader) items.add(ListItem.header("בקשות"));
+            for (org.json.JSONObject q : queued) {
+                items.add(ListItem.request(0, q.optString("chat_username"), q.optString("chat_name"),
+                        "queued", q.optString("kind"), q.optString("privacy_target")));
+            }
+        }
         items.add(ListItem.header("פרטיות"));
         items.add(ListItem.privacy(true,  AskanFilter.getInstance().shouldShowProfilePhotos()));
         items.add(ListItem.privacy(false, AskanFilter.getInstance().shouldShowStories()));
+        items.add(ListItem.header("תמיכה"));
+        items.add(ListItem.action(ACTION_COPY_STATUS, "העתקת פרטי מצב",
+                "פרטי החיבור של המכשיר, להדבקה בפנייה לתמיכה"));
+        items.add(ListItem.action(ACTION_SHARE_REPORT, "שליחת דוח לתמיכה",
+                "שליחת אותם פרטים בוואטסאפ, בטלגרם או במייל"));
+        items.add(ListItem.action(ACTION_RECONNECT, "רענון החיבור לשרת",
+                "כשבקשות נכשלות או שהרשימה לא מתעדכנת"));
         List<ListItem> blocked = buildBlockedItems();
         if (!blocked.isEmpty()) {
             items.add(ListItem.header("תוכן חסום"));
             items.addAll(blocked);
         }
         updateStats();
+    }
+
+    private List<org.json.JSONObject> queuedRequests() {
+        TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
+        return AskanFilter.getInstance().getQueuedRequests(me != null ? me.phone : null);
+    }
+
+    private void onAction(int actionId) {
+        Context ctx = getParentActivity();
+        if (ctx == null) return;
+        AskanFilter filter = AskanFilter.getInstance();
+        switch (actionId) {
+            case ACTION_COPY_STATUS: {
+                AndroidUtilities.addToClipboard(filter.buildStatusReport(currentAccount));
+                android.widget.Toast.makeText(ctx, "פרטי המצב הועתקו", android.widget.Toast.LENGTH_SHORT).show();
+                break;
+            }
+            case ACTION_SHARE_REPORT: {
+                android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(android.content.Intent.EXTRA_TEXT, filter.buildStatusReport(currentAccount));
+                try {
+                    ctx.startActivity(android.content.Intent.createChooser(send, "שליחת דוח לתמיכה"));
+                } catch (Exception e) {
+                    android.widget.Toast.makeText(ctx, "לא נמצאה אפליקציה לשליחה", android.widget.Toast.LENGTH_SHORT).show();
+                }
+                break;
+            }
+            case ACTION_RECONNECT: {
+                TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
+                if (me == null) return;
+                new AlertDialog.Builder(ctx)
+                        .setTitle("רענון החיבור לשרת")
+                        .setMessage("החיבור של המכשיר לשרת הסינון ייווצר מחדש וההרשאות יסונכרנו שוב. "
+                                + "החשבון בטלגרם, הצ'אטים וההגדרות לא ישתנו.")
+                        .setPositiveButton("רענון", (d, w) -> filter.resetConnection(me.phone,
+                                UserConfig.getInstance(currentAccount).getClientUserId(), ok -> {
+                                    Context c = getParentActivity();
+                                    if (c == null) return;
+                                    android.widget.Toast.makeText(c, ok
+                                            ? "החיבור חודש. ההרשאות מתעדכנות"
+                                            : "לא ניתן להתחבר לשרת כרגע. נסה שוב בעוד כמה דקות",
+                                            android.widget.Toast.LENGTH_LONG).show();
+                                }))
+                        .setNegativeButton("ביטול", null)
+                        .show();
+                break;
+            }
+        }
     }
 
     private List<ListItem> buildBlockedItems() {
@@ -346,6 +424,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 case TYPE_SECTION_HEADER: cell = new SectionHeaderCell(ctx); break;
                 case TYPE_REQUEST:        cell = new RequestCell(ctx);        break;
                 case TYPE_PRIVACY_TOGGLE: cell = new PrivacyToggleCell(ctx);  break;
+                case TYPE_ACTION:         cell = new ActionCell(ctx);         break;
                 default:                  cell = new BlockedChatCell(ctx);    break;
             }
             return new RecyclerListView.Holder(cell);
@@ -358,6 +437,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 case TYPE_SECTION_HEADER: ((SectionHeaderCell) holder.itemView).bind(item.headerTitle); break;
                 case TYPE_REQUEST:        ((RequestCell) holder.itemView).bind(item, position); break;
                 case TYPE_PRIVACY_TOGGLE: ((PrivacyToggleCell) holder.itemView).bind(item, position); break;
+                case TYPE_ACTION:         ((ActionCell) holder.itemView).bind(item, position); break;
                 case TYPE_BLOCKED_CHAT:
                     boolean nextIsChat = (position + 1 < items.size())
                             && items.get(position + 1).viewType == TYPE_BLOCKED_CHAT;
@@ -514,7 +594,12 @@ public class AskanBlockedChatsActivity extends BaseFragment {
             initialsView.setBackground(avBg);
 
             boolean isPending = "pending".equals(item.requestStatus);
-            if (isPending) {
+            if ("queued".equals(item.requestStatus)) {
+                statusView.setText("נשמרה במכשיר, תישלח כשיהיה חיבור");
+                statusView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+                statusView.setTypeface(Typeface.DEFAULT);
+                retryButton.setVisibility(View.GONE);
+            } else if (isPending) {
                 // Pill badge
                 statusView.setText("ממתינה לטיפול ⏳");
                 statusView.setTextColor(Theme.getColor(Theme.key_color_orange));
@@ -717,6 +802,53 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         @Override
         protected void onMeasure(int w, int h) {
             super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(64), MeasureSpec.EXACTLY));
+        }
+    }
+
+    // ── ActionCell ────────────────────────────────────────────────────────────
+
+    private class ActionCell extends FrameLayout {
+        private final TextView titleView;
+        private final TextView subtitleView;
+        private final View     divider;
+
+        ActionCell(Context ctx) {
+            super(ctx);
+            setBackground(cardBg(ctx));
+
+            titleView = new TextView(ctx);
+            titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+            titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            titleView.setTypeface(Typeface.DEFAULT_BOLD);
+            addView(titleView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
+                    Gravity.START | Gravity.TOP, 18, 11, 18, 0));
+
+            subtitleView = new TextView(ctx);
+            subtitleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
+            subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            subtitleView.setMaxLines(1);
+            subtitleView.setEllipsize(TextUtils.TruncateAt.END);
+            addView(subtitleView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
+                    Gravity.START | Gravity.BOTTOM, 18, 0, 18, 11));
+
+            divider = new View(ctx);
+            divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
+            addView(divider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 0.5f,
+                    Gravity.BOTTOM | Gravity.START, 18, 0, 0, 0));
+        }
+
+        void bind(ListItem item, int position) {
+            titleView.setText(item.actionTitle);
+            subtitleView.setText(item.actionSubtitle);
+            setOnClickListener(v -> onAction(item.actionId));
+            boolean nextIsAction = (position + 1 < items.size())
+                    && items.get(position + 1).viewType == TYPE_ACTION;
+            divider.setVisibility(nextIsAction ? View.VISIBLE : View.GONE);
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) {
+            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(60), MeasureSpec.EXACTLY));
         }
     }
 
