@@ -215,6 +215,11 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         listView.setClipToPadding(false);
         listView.setAdapter(adapter = new ListAdapter(context));
         listView.addItemDecoration(new CardGroupDecoration());
+        listView.setOnItemClickListener((view, position) -> {
+            if (position >= 0 && position < items.size() && items.get(position).viewType == TYPE_ACTION) {
+                onAction(items.get(position).actionId);
+            }
+        });
         root.addView(listView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
@@ -414,7 +419,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         ListAdapter(Context c) { ctx = c; }
         @Override public int getItemCount() { return items.size(); }
         @Override public int getItemViewType(int pos) { return items.get(pos).viewType; }
-        @Override public boolean isEnabled(RecyclerView.ViewHolder h) { return false; }
+        @Override public boolean isEnabled(RecyclerView.ViewHolder h) { return h.getItemViewType() == TYPE_ACTION; }
 
         @NonNull
         @Override
@@ -427,6 +432,10 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 case TYPE_ACTION:         cell = new ActionCell(ctx);         break;
                 default:                  cell = new BlockedChatCell(ctx);    break;
             }
+            // Without explicit params RecyclerView wraps each card to its content width,
+            // so cards of different lengths came out ragged.
+            cell.setLayoutParams(new RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
             return new RecyclerListView.Holder(cell);
         }
 
@@ -840,7 +849,6 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         void bind(ListItem item, int position) {
             titleView.setText(item.actionTitle);
             subtitleView.setText(item.actionSubtitle);
-            setOnClickListener(v -> onAction(item.actionId));
             boolean nextIsAction = (position + 1 < items.size())
                     && items.get(position + 1).viewType == TYPE_ACTION;
             divider.setVisibility(nextIsAction ? View.VISIBLE : View.GONE);
