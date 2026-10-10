@@ -58,6 +58,11 @@ public class AskanFilter {
     // Persisted map: numericId → username, built opportunistically when TLRPC.Chat is available.
     // Used by isExplicitlyAllowedById in FCM cold-start to resolve username from numeric ID.
     private final HashMap<String, String> usernameById = new HashMap<>();
+    // Persisted map: managed bot id → id of the bot that manages it (userFull.bot_manager_id,
+    // set by Telegram, so it cannot be faked by naming a bot after a trusted one).
+    private final HashMap<String, String> managerByBotId = new HashMap<>();
+    // Bots whose full profile was already requested this session, to learn their manager.
+    private final Set<Long> managerLookupRequested = new HashSet<>();
 
     // Device token — persisted across sessions. Issued via POST /api/auth/device.
     // Stored per-phone in SharedPreferences under tokenKey(phone); deviceToken is
@@ -346,6 +351,7 @@ public class AskanFilter {
                 }
 
                 // Step 3: Authenticated calls (only after token confirmed)
+                flushQueue(phone, telegramId, tok);
                 checkRequestStatusChanges(phone, telegramId);
                 reportVpnApps(phone, telegramId);
                 AskanAdsManager.getInstance().fetchNow();
@@ -362,14 +368,19 @@ public class AskanFilter {
     // ─── Send access request ─────────────────────────────────────────────────
 
     public interface AccessRequestCallback {
-        void onResult(String status);
+        /**
+         * @param status  server status, or "queued" (saved locally, will retry),
+         *                "rate_limited" (HTTP 429) or "error"
+         * @param message the server's own explanation, when it sent one ("" otherwise)
+         */
+        void onResult(String status, String message);
     }
 
     public void sendAccessRequest(String phone, String chatUsername,
                                    String chatName, String note,
                                    Runnable onSuccess, Runnable onRejected) {
-        sendAccessRequest(phone, chatUsername, chatName, note, status -> {
-            if ("pending".equals(status) || "already_pending".equals(status)) {
+        sendAccessRequest(phone, chatUsername, chatName, note, (status, message) -> {
+            if ("pending".equals(status) || "already_pending".equals(status) || "queued".equals(status)) {
                 if (onSuccess != null) onSuccess.run();
             } else {
                 if (onRejected != null) onRejected.run();
@@ -409,23 +420,265 @@ public class AskanFilter {
                             : new HttpResult(401, "");
                 }
 
+                if (isTransient(r)) {
+                    // No network or the server is down: keep the request and send it
+                    // on the next successful permissions sync instead of losing it.
+                    enqueue(phone, "/api/requests", body, "access:" + chatUsername,
+                            "access", chatUsername, chatName, null);
+                    AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult("queued", ""); });
+                    return;
+                }
+
                 final HttpResult result = r;
                 AndroidUtilities.runOnUIThread(() -> {
                     try {
-                        if (result.code >= 200 && result.code < 300) {
-                            String s = new JSONObject(result.body).optString("status", "error");
-                            if (callback != null) callback.onResult(s);
+                        if (result.code == 429) {
+                            if (callback != null) callback.onResult("rate_limited", "");
+                        } else if (result.code >= 200 && result.code < 300) {
+                            JSONObject json = new JSONObject(result.body);
+                            if (callback != null) callback.onResult(json.optString("status", "error"), json.optString("message", ""));
                         } else {
-                            if (callback != null) callback.onResult("error");
+                            if (callback != null) callback.onResult("error", "");
                         }
                     } catch (Exception e) {
-                        if (callback != null) callback.onResult("error");
+                        if (callback != null) callback.onResult("error", "");
                     }
                 });
             } catch (Exception e) {
                 FileLog.e("AskanFilter: sendAccessRequest failed", e);
-                AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult("error"); });
+                AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult("error", ""); });
             }
+        }).start();
+    }
+
+    // ─── Offline request queue ────────────────────────────────────────────────
+    // A request that fails for lack of network (or a server outage) is kept here
+    // and re-sent on the next successful permissions sync, instead of the user
+    // getting an error and the request being lost. Only transient failures are
+    // queued: a real answer from the server (rejected, rate-limited, bad input)
+    // is shown to the user as before.
+
+    private static final String PREFS_REQ_QUEUE = "askan_request_queue";
+    private static final int QUEUE_MAX = 50;
+    private static final long QUEUE_TTL_MS = 7L * 24 * 60 * 60 * 1000;
+    private static final Object QUEUE_LOCK = new Object();
+
+    private static boolean isTransient(HttpResult r) {
+        return r.code == -1 || r.code == 408 || r.code >= 500;
+    }
+
+    private static SharedPreferences queuePrefs() {
+        return ApplicationLoader.applicationContext.getSharedPreferences(PREFS_REQ_QUEUE, Context.MODE_PRIVATE);
+    }
+
+    private static JSONArray readQueue() {
+        try {
+            return new JSONArray(queuePrefs().getString("items", "[]"));
+        } catch (Exception e) {
+            return new JSONArray();
+        }
+    }
+
+    private static void writeQueue(JSONArray items) {
+        queuePrefs().edit().putString("items", items.toString()).apply();
+    }
+
+    private void enqueue(String phone, String path, JSONObject body, String key,
+                         String kind, String chatUsername, String chatName, String privacyTarget) {
+        synchronized (QUEUE_LOCK) {
+            try {
+                long now = System.currentTimeMillis();
+                JSONArray old = readQueue();
+                JSONArray kept = new JSONArray();
+                for (int i = 0; i < old.length(); i++) {
+                    JSONObject it = old.getJSONObject(i);
+                    boolean same = phone.equals(it.optString("phone")) && key.equals(it.optString("key"));
+                    boolean expired = now - it.optLong("ts") > QUEUE_TTL_MS;
+                    if (!same && !expired) kept.put(it);
+                }
+                JSONObject item = new JSONObject();
+                item.put("phone", phone);
+                item.put("path", path);
+                item.put("body", body.toString());
+                item.put("key", key);
+                item.put("kind", kind);
+                if (chatUsername != null) item.put("chat_username", chatUsername);
+                if (chatName != null) item.put("chat_name", chatName);
+                if (privacyTarget != null) item.put("privacy_target", privacyTarget);
+                item.put("ts", now);
+                kept.put(item);
+                while (kept.length() > QUEUE_MAX) kept.remove(0);
+                writeQueue(kept);
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: enqueue failed", e);
+            }
+        }
+    }
+
+    /** Requests for {@code phone} still waiting to be sent, oldest first. */
+    public List<JSONObject> getQueuedRequests(String phone) {
+        List<JSONObject> out = new ArrayList<>();
+        if (phone == null) return out;
+        synchronized (QUEUE_LOCK) {
+            JSONArray items = readQueue();
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject it = items.optJSONObject(i);
+                if (it != null && phone.equals(it.optString("phone")) && now - it.optLong("ts") <= QUEUE_TTL_MS) {
+                    out.add(it);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Sends whatever is queued for {@code phone}. Blocks — background threads only.
+     * Stops at the first transient failure (the server is still unreachable) and
+     * keeps the rest; any other answer, success or refusal, removes the item.
+     */
+    private void flushQueue(String phone, long telegramId, String token) {
+        List<JSONObject> pending = getQueuedRequests(phone);
+        if (pending.isEmpty()) return;
+        List<String> done = new ArrayList<>();
+        for (JSONObject it : pending) {
+            try {
+                JSONObject body = new JSONObject(it.optString("body", "{}"));
+                String url = SERVER_URL + it.optString("path");
+                HttpResult r = postJson(url, body, token);
+                if (r.code == 401) {
+                    clearToken(phone);
+                    token = issueNewToken(phone, telegramId);
+                    if (token == null) break;
+                    r = postJson(url, body, token);
+                }
+                if (isTransient(r)) break;
+                done.add(it.optString("key"));
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: flushQueue item failed", e);
+                done.add(it.optString("key"));
+            }
+        }
+        if (done.isEmpty()) return;
+        synchronized (QUEUE_LOCK) {
+            try {
+                JSONArray old = readQueue();
+                JSONArray kept = new JSONArray();
+                for (int i = 0; i < old.length(); i++) {
+                    JSONObject it = old.getJSONObject(i);
+                    if (!(phone.equals(it.optString("phone")) && done.contains(it.optString("key")))) kept.put(it);
+                }
+                writeQueue(kept);
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: flushQueue cleanup failed", e);
+            }
+        }
+        final int sent = done.size();
+        AndroidUtilities.runOnUIThread(() -> toast(sent == 1
+                ? "בקשה שנשמרה במכשיר נשלחה עכשיו לשרת"
+                : sent + " בקשות שנשמרו במכשיר נשלחו עכשיו לשרת"));
+    }
+
+    private static void toast(String text) {
+        try {
+            android.widget.Toast.makeText(ApplicationLoader.applicationContext, text, android.widget.Toast.LENGTH_LONG).show();
+        } catch (Exception ignored) {}
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ─── Support tools ────────────────────────────────────────────────────────
+
+    /**
+     * One plain-text block describing this device's connection to our server, for
+     * the user to copy or share with support. Holds identifiers and counts only —
+     * never chat contents or list entries.
+     */
+    public String buildStatusReport(int account) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("TeleGlatt — דוח מצב\n");
+        sb.append("נוצר: ").append(new java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.US)
+                .format(new java.util.Date())).append('\n');
+        try {
+            android.content.pm.PackageInfo pi = ApplicationLoader.applicationContext.getPackageManager()
+                    .getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
+            sb.append("גרסה: ").append(pi.versionName).append(" (").append(pi.versionCode).append(")\n");
+        } catch (Exception ignored) {}
+        sb.append("אנדרואיד: ").append(Build.VERSION.RELEASE).append(" (SDK ").append(Build.VERSION.SDK_INT)
+                .append(") · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');
+
+        TLRPC.User me = UserConfig.getInstance(account).getCurrentUser();
+        String phone = me != null ? me.phone : null;
+        sb.append("חשבון: ").append(phone != null ? "+" + phone : "—")
+                .append(" · Telegram ID ").append(me != null ? me.id : 0).append('\n');
+        int accounts = 0;
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            if (UserConfig.getInstance(a).isClientActivated()) accounts++;
+        }
+        sb.append("חשבונות במכשיר: ").append(accounts).append('\n');
+
+        sb.append("אסימון מכשיר: ").append(peekToken(phone) != null ? "קיים" : "חסר").append('\n');
+        sb.append("ההרשאות השמורות שייכות לחשבון הזה: ").append(isCacheForPhone(phone) ? "כן" : "לא").append('\n');
+        if (lastPermissionsFetch > 0) {
+            long mins = (System.currentTimeMillis() - lastPermissionsFetch) / 60000;
+            sb.append("סנכרון הרשאות אחרון: לפני ").append(mins).append(" דקות\n");
+        } else {
+            sb.append("סנכרון הרשאות אחרון: לא הצליח מאז שהאפליקציה נפתחה\n");
+        }
+        synchronized (this) {
+            int patterns = 0;
+            for (String e : globalAllow) if (e.indexOf('*') >= 0) patterns++;
+            sb.append("רשימות: גלובלית ").append(globalAllow.size())
+                    .append(" (מתוכן תבניות ").append(patterns).append(")")
+                    .append(" · אישית ").append(userAllow.size())
+                    .append(" · חסומים ").append(blockedChats.size())
+                    .append(" · מילים ").append(blockedWords.size()).append('\n');
+            sb.append("תמונות פרופיל: ").append(showProfilePhotos ? "מוצגות" : "מוסתרות")
+                    .append(" · סטוריז: ").append(showStories ? "מוצגים" : "מוסתרים").append('\n');
+        }
+        sb.append("בקשות שממתינות לשליחה: ").append(getQueuedRequests(phone).size()).append('\n');
+        sb.append("בדיקת גרסה: ").append(updateCheckStatus != null ? updateCheckStatus : "לא התקבלה").append('\n');
+
+        Context ctx = ApplicationLoader.applicationContext;
+        try {
+            boolean notif = androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled();
+            sb.append("התראות: ").append(notif ? "מורשות" : "חסומות").append('\n');
+        } catch (Exception ignored) {}
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                sb.append("חיסכון בסוללה: ").append(pm != null && pm.isIgnoringBatteryOptimizations(ctx.getPackageName())
+                        ? "פטור" : "לא פטור (הודעות ברקע עלולות להתעכב)").append('\n');
+            } catch (Exception ignored) {}
+        }
+        try {
+            boolean keepAlive = org.telegram.messenger.MessagesController.getMainSettings(account)
+                    .getBoolean("askanKeepAlive", true);
+            sb.append("חיבור ברקע: ").append(keepAlive ? "פעיל" : "כבוי").append('\n');
+        } catch (Exception ignored) {}
+        String canopy = detectCanopyDistributor();
+        if (canopy != null) sb.append("סינון נוסף במכשיר: ").append(canopy).append('\n');
+        return sb.toString().trim();
+    }
+
+    public interface ResultCallback {
+        void onResult(boolean ok);
+    }
+
+    /**
+     * Drops this phone's device token, issues a fresh one and resyncs permissions.
+     * The cure for a stale or foreign token (401s, someone else's request list)
+     * without the user having to reinstall. Telegram itself is not touched.
+     */
+    public void resetConnection(String phone, long telegramId, ResultCallback callback) {
+        new Thread(() -> {
+            clearToken(phone);
+            String tok = issueNewToken(phone, telegramId);
+            if (tok != null) {
+                lastPermissionsFetch = 0;
+                fetchPermissions(phone, telegramId);
+            }
+            AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(tok != null); });
         }).start();
     }
 
@@ -555,6 +808,15 @@ public class AskanFilter {
                 Set<String> bc = prefs.getStringSet("blocked_chats", null);
                 blockedChats.clear(); if (bc != null) for (String e : bc) blockedChats.add(norm(e));
 
+                Set<String> mgrSet = prefs.getStringSet("bot_manager_map", null);
+                managerByBotId.clear();
+                if (mgrSet != null) {
+                    for (String entry : mgrSet) {
+                        int sep = entry.indexOf('|');
+                        if (sep > 0) managerByBotId.put(entry.substring(0, sep), entry.substring(sep + 1));
+                    }
+                }
+
                 Set<String> idMapSet = prefs.getStringSet("id_username_map", null);
                 usernameById.clear();
                 if (idMapSet != null) {
@@ -657,7 +919,8 @@ public class AskanFilter {
                 // no MessagesController (unit tests) — stay fail-closed
             }
         }
-        return isExplicitlyAllowed(idStr, username) || matchesGlobalBotPattern(norm(username));
+        return isExplicitlyAllowed(idStr, username) || matchesGlobalBotPattern(norm(username))
+                || isManagedByTrustedBot(id, null);
     }
 
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
@@ -892,6 +1155,16 @@ public class AskanFilter {
                     r = (token != null)
                             ? postJson(SERVER_URL + "/api/requests/privacy", body, token)
                             : new HttpResult(401, "");
+                }
+
+                if (isTransient(r)) {
+                    enqueue(phone, "/api/requests/privacy", body, "privacy:" + target,
+                            "privacy", null, null, target);
+                    AndroidUtilities.runOnUIThread(() -> {
+                        toast("אין חיבור לשרת כרגע. הבקשה נשמרה ותישלח אוטומטית");
+                        if (onSuccess != null) onSuccess.run();
+                    });
+                    return;
                 }
 
                 final boolean ok = r.code >= 200 && r.code < 300;
@@ -1275,8 +1548,55 @@ public class AskanFilter {
         recordIdMapping(idStr, uname); // lets id-only requests (inline, web views) resolve it
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
                 || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
-                || matchesGlobalBotPattern(uname);
+                || matchesGlobalBotPattern(uname)
+                || isManagedByTrustedBot(user.id, user);
         return !allowed;
+    }
+
+    /**
+     * Managed bots: Telegram lets a bot have per-user copies created under it
+     * (DriveBot gives every driver one), and records the parent in
+     * userFull.bot_manager_id. A global allow entry "managed_by:<id>" opens every
+     * bot that Telegram says is managed by that bot. Unlike a username pattern this
+     * cannot be spoofed — anyone can register drivebot_xyz_bot, nobody can make
+     * Telegram report a false manager.
+     */
+    private boolean isManagedByTrustedBot(long botId, TLRPC.User user) {
+        String idStr = String.valueOf(botId);
+        String manager = managerByBotId.get(idStr);
+        if (manager == null) {
+            try {
+                int account = UserConfig.selectedAccount;
+                TLRPC.UserFull full = org.telegram.messenger.MessagesController.getInstance(account).getUserFull(botId);
+                if (full != null && full.bot_manager_id != 0) {
+                    recordBotManager(botId, full.bot_manager_id);
+                    manager = String.valueOf(full.bot_manager_id);
+                } else if (full == null && user != null && managerLookupRequested.add(botId)) {
+                    // Not loaded yet: fetch the profile once so the next check knows.
+                    AndroidUtilities.runOnUIThread(() -> {
+                        try {
+                            org.telegram.messenger.MessagesController.getInstance(account).loadFullUser(user, 0, false);
+                        } catch (Exception ignored) {}
+                    });
+                }
+            } catch (Throwable ignored) {
+                // no MessagesController (unit tests) — stay fail-closed
+            }
+        }
+        return manager != null && globalAllow.contains("managed_by:" + manager);
+    }
+
+    /** Remembers which bot manages {@code botId}; persisted so cold checks need no network. */
+    public synchronized void recordBotManager(long botId, long managerId) {
+        if (botId == 0 || managerId == 0) return;
+        String key = String.valueOf(botId), val = String.valueOf(managerId);
+        if (val.equals(managerByBotId.get(key))) return;
+        managerByBotId.put(key, val);
+        if (ApplicationLoader.applicationContext == null) return;
+        Set<String> snapshot = new HashSet<>(managerByBotId.size());
+        for (Map.Entry<String, String> e : managerByBotId.entrySet()) snapshot.add(e.getKey() + "|" + e.getValue());
+        ApplicationLoader.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putStringSet("bot_manager_map", snapshot).apply();
     }
 
     // ─── Block-reason explanation (shown to the user) ─────────────────────────
@@ -1311,7 +1631,8 @@ public class AskanFilter {
         if (!user.bot) return BlockReason.NOT_BLOCKED;
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
                 || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)))
-                || matchesGlobalBotPattern(uname);
+                || matchesGlobalBotPattern(uname)
+                || isManagedByTrustedBot(user.id, user);
         return allowed ? BlockReason.NOT_BLOCKED : BlockReason.NOT_APPROVED;
     }
 }

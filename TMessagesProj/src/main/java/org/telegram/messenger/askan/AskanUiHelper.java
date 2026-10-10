@@ -334,7 +334,7 @@ public class AskanUiHelper {
             String note = noteInput.getText().toString().trim();
             AskanFilter.getInstance().sendAccessRequest(
                     phone, chatUsername, chatName, note,
-                    status -> {
+                    (status, serverMessage) -> {
                         String msg;
                         switch (status) {
                             case "pending":
@@ -343,6 +343,25 @@ public class AskanUiHelper {
                                 sheet.dismiss();
                                 if (onSent != null) onSent.run();
                                 return;
+                            case "queued":
+                                markPending(ctx, chatUsername);
+                                Toast.makeText(ctx, "אין חיבור לשרת כרגע. הבקשה נשמרה ותישלח אוטומטית", Toast.LENGTH_LONG).show();
+                                sheet.dismiss();
+                                if (onSent != null) onSent.run();
+                                return;
+                            case "rate_limited":
+                                msg = "שלחת הרבה בקשות בזמן קצר. נסה שוב בעוד כמה דקות";
+                                break;
+                            case "approved": {
+                                // The server already allows it, so the local lists are stale.
+                                // Refresh now instead of waiting for the 5-minute throttle.
+                                AskanFilter.lastPermissionsFetch = 0;
+                                AskanFilter.getInstance().fetchPermissions(phone,
+                                        UserConfig.getInstance(account).getClientUserId());
+                                Toast.makeText(ctx, "הגישה כבר מאושרת. ההרשאות מתעדכנות, נסה לפתוח שוב בעוד רגע", Toast.LENGTH_LONG).show();
+                                sheet.dismiss();
+                                return;
+                            }
                             case "already_pending":
                                 markPending(ctx, chatUsername);
                                 Toast.makeText(ctx, "בקשה קיימת כבר ממתינה לאישור", Toast.LENGTH_LONG).show();
@@ -360,6 +379,11 @@ public class AskanUiHelper {
                                 break;
                             default:
                                 msg = "הבקשה לא התקבלה, נסה שוב מאוחר יותר";
+                        }
+                        // The server's own wording is more specific ("rejected recently,
+                        // try tomorrow", "daily limit reached") — prefer it when given.
+                        if (serverMessage != null && !serverMessage.isEmpty() && !"rate_limited".equals(status)) {
+                            msg = serverMessage;
                         }
                         Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
                         sendBtn.setText("שלח בקשה");

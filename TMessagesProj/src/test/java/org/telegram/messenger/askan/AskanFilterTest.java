@@ -228,6 +228,30 @@ public class AskanFilterTest {
         assertTrue(AskanFilter.globMatches("a*", "a"));
     }
 
+    // Managed bots: opened by the manager Telegram reports, not by name.
+    @Test
+    public void botManagedByTrustedBot_isAllowed() throws Exception {
+        seed("globalAllow", "managed_by:8899411263");
+        filter.recordBotManager(9500, 8899411263L);
+        assertFalse(filter.isUserBlocked(user(9500, "anything_bot", true)));
+        TLRPC.TL_inputUser input = new TLRPC.TL_inputUser();
+        input.user_id = 9500;
+        assertTrue(filter.isInlineBotAllowed(input));
+    }
+
+    @Test
+    public void botManagedByOtherBot_staysBlocked() throws Exception {
+        seed("globalAllow", "managed_by:8899411263");
+        filter.recordBotManager(9501, 1234L);
+        assertTrue(filter.isUserBlocked(user(9501, "drivebot_fake_bot", true)));
+    }
+
+    @Test
+    public void managedBot_withoutTrustEntry_staysBlocked() throws Exception {
+        filter.recordBotManager(9502, 8899411263L);
+        assertTrue(filter.isUserBlocked(user(9502, "drivebot_abc_bot", true)));
+    }
+
     @Test
     public void explicitlyBlockedUser_isBlocked() throws Exception {
         seed("blockedChats", "700");
