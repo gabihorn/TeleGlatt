@@ -654,7 +654,20 @@ public class AskanFilter {
         try {
             boolean keepAlive = org.telegram.messenger.MessagesController.getMainSettings(account)
                     .getBoolean("askanKeepAlive", true);
-            sb.append("חיבור ברקע: ").append(keepAlive ? "פעיל" : "כבוי").append('\n');
+            sb.append("חיבור ברקע: ").append(keepAlive ? "מותר" : "כבוי");
+            if (keepAlive && ApplicationLoader.isFcmDeliveryWorking()) sb.append(" (לא נדרש, Firebase עובד)");
+            sb.append("\n");
+        } catch (Exception ignored) {}
+        try {
+            boolean hasToken = !android.text.TextUtils.isEmpty(org.telegram.messenger.SharedConfig.pushString);
+            boolean registered = UserConfig.getInstance(account).registeredForPush;
+            long last = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getLong("last_fcm_push", 0);
+            sb.append("Firebase: אסימון ").append(hasToken ? "קיים" : "חסר")
+                    .append(" · רשום בטלגרם: ").append(registered ? "כן" : "לא").append("\n");
+            sb.append("התראה אחרונה דרך Firebase: ");
+            if (last == 0) sb.append("עוד לא התקבלה");
+            else sb.append("לפני ").append((System.currentTimeMillis() - last) / 60000).append(" דקות");
+            sb.append("\n");
         } catch (Exception ignored) {}
         String canopy = detectCanopyDistributor();
         if (canopy != null) sb.append("סינון נוסף במכשיר: ").append(canopy).append('\n');

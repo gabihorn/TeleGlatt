@@ -27,6 +27,12 @@ public class GcmPushListenerService extends FirebaseMessagingService {
             FileLog.d("FCM received data: " + data + " from: " + from);
         }
 
+        // Askan: remember that Firebase delivery works, so the battery-hungry
+        // keep-alive service can stand down (ApplicationLoader.startPushService).
+        try {
+            ApplicationLoader.applicationContext.getSharedPreferences("askan_filter", android.content.Context.MODE_PRIVATE)
+                    .edit().putLong("last_fcm_push", System.currentTimeMillis()).apply();
+        } catch (Throwable ignore) {}
         PushListenerController.processRemoteMessage(PushListenerController.PUSH_TYPE_FIREBASE, data.get("p"), time);
     }
 
