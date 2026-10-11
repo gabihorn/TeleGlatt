@@ -462,6 +462,16 @@ public class ConnectionsManager extends BaseController {
             if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked sticker/emoji search");
             return;
         }
+        // Telegram's recommendations — "similar channels" after joining and on a
+        // channel's profile, "channels you may like" in search, similar bots and the
+        // popular mini-app list. All of them advertise unfiltered chats; without a
+        // response the sections simply stay empty.
+        if (object instanceof TLRPC.TL_channels_getChannelRecommendations
+                || object instanceof org.telegram.tgnet.tl.TL_bots.getBotRecommendations
+                || object instanceof org.telegram.tgnet.tl.TL_bots.getPopularAppBots) {
+            if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked recommendations");
+            return;
+        }
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d("send request " + object + " with token = " + requestToken);
         }
