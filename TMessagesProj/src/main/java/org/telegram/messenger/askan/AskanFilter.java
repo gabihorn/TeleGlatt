@@ -936,6 +936,48 @@ public class AskanFilter {
                 || isManagedByTrustedBot(id, null);
     }
 
+    /**
+     * An allowed bot's mini app stays on the site it was opened on. Once a bot is
+     * approved its web view used to be a free browser: any link inside the page could
+     * take the user anywhere. Navigation is now limited to the opening site's domain
+     * (subdomains included); other sites need a global allow entry "web:<domain>".
+     */
+    public synchronized boolean isMiniAppNavigationAllowed(String homeDomain, String targetHost) {
+        String target = baseDomain(targetHost);
+        if (target == null) return true; // not a web address — handled elsewhere
+        if (target.equals(homeDomain)) return true;
+        return globalAllow.contains("web:" + target);
+    }
+
+    /** "flows.drivebot.co.il" → "drivebot.co.il", "a.b.example.com" → "example.com". */
+    public static String baseDomain(String host) {
+        if (host == null) return null;
+        host = host.trim().toLowerCase();
+        if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+        if (host.isEmpty()) return null;
+        if (host.matches("[0-9.]+") || host.contains(":")) return host; // IP address
+        String[] l = host.split("\\.");
+        if (l.length <= 2) return host;
+        String sld = l[l.length - 2];
+        boolean twoPartSuffix = l[l.length - 1].length() == 2
+                && (sld.equals("co") || sld.equals("org") || sld.equals("net") || sld.equals("ac")
+                || sld.equals("gov") || sld.equals("com") || sld.equals("edu") || sld.equals("muni")
+                || sld.equals("k12") || sld.equals("idf"));
+        int keep = twoPartSuffix ? 3 : 2;
+        StringBuilder sb = new StringBuilder();
+        for (int i = l.length - keep; i < l.length; i++) {
+            if (sb.length() > 0) sb.append('.');
+            sb.append(l[i]);
+        }
+        return sb.toString();
+    }
+
+    /** Opens an approved chat right away, without waiting for the next permissions sync. */
+    public synchronized void allowLocally(String username) {
+        String u = norm(username);
+        if (u != null && !u.isEmpty()) userAllow.add(u);
+    }
+
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
     public synchronized boolean shouldShowStories() { return showStories; }
     public synchronized boolean isContentFilterEnabled() { return contentFilterEnabled; }

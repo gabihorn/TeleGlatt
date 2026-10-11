@@ -22,6 +22,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.R;
@@ -55,6 +56,8 @@ public class AskanBlockedChatsActivity extends BaseFragment {
     private static final int ACTION_COPY_STATUS  = 1;
     private static final int ACTION_SHARE_REPORT = 2;
     private static final int ACTION_RECONNECT    = 3;
+
+    private static final int MAX_DECIDED = 5;
 
     private static class ListItem {
         final int viewType;
@@ -310,10 +313,25 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 if (existing == null || r.id > existing.id) deduped.put(key, r);
             }
             List<AskanFilter.RequestInfo> pending = new ArrayList<>();
-            for (AskanFilter.RequestInfo r : deduped.values()) { if ("pending".equals(r.status)) pending.add(r); }
+            List<AskanFilter.RequestInfo> decided = new ArrayList<>();
+            android.content.SharedPreferences seen = AskanFilter.reqStatusPrefs(ApplicationLoader.applicationContext);
+            for (AskanFilter.RequestInfo r : deduped.values()) {
+                if ("pending".equals(r.status)) pending.add(r);
+                // Answered requests stay only until the user acts on them (open / dismiss)
+                // or the server's window runs out (approved 3 days, rejected 7), and only
+                // the newest few — so this section never turns into a list nobody clears.
+                else if (("approved".equals(r.status) || "rejected".equals(r.status))
+                        && r.id > 0 && !seen.getBoolean("done_" + r.id, false)
+                        && decided.size() < MAX_DECIDED) decided.add(r);
+            }
             if (!pending.isEmpty()) {
                 items.add(ListItem.header("בקשות"));
                 for (AskanFilter.RequestInfo r : pending)
+                    items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget));
+            }
+            if (!decided.isEmpty()) {
+                items.add(ListItem.header("תשובות אחרונות"));
+                for (AskanFilter.RequestInfo r : decided)
                     items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget));
             }
         }
@@ -391,6 +409,55 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                         .show();
                 break;
             }
+        }
+    }
+
+    /** The user acted on an answered request — drop it from "recent answers" for good. */
+    private void markDone(ListItem item) {
+        markDoneLater(item);
+        int idx = items.indexOf(item);
+        if (idx < 0) return;
+        items.remove(idx);
+        // Drop the section header too when this was its last row.
+        if (idx > 0 && items.get(idx - 1).viewType == TYPE_SECTION_HEADER
+                && (idx >= items.size() || items.get(idx).viewType == TYPE_SECTION_HEADER)) {
+            items.remove(idx - 1);
+        }
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    /** Same, but the row stays visible until the screen is next opened (shows "נשלח ✓"). */
+    private void markDoneLater(ListItem item) {
+        if (item.requestId <= 0) return;
+        AskanFilter.reqStatusPrefs(ApplicationLoader.applicationContext).edit()
+                .putBoolean("done_" + item.requestId, true).apply();
+    }
+
+    /** Opens the channel/group/bot of an approved request. */
+    private void openApproved(String target) {
+        if (target == null || target.isEmpty()) return;
+        AskanFilter.getInstance().allowLocally(target);
+        String t = target.startsWith("@") ? target.substring(1) : target;
+        if (t.matches("-?\\d+")) {
+            // Stored by numeric id (no public username) — open it if the app knows it.
+            long id = Long.parseLong(t);
+            MessagesController mc = MessagesController.getInstance(currentAccount);
+            android.os.Bundle args = new android.os.Bundle();
+            if (id > 0 && mc.getUser(id) != null) {
+                args.putLong("user_id", id);
+            } else {
+                long chatId = Math.abs(id);
+                if (chatId > 1000000000000L) chatId -= 1000000000000L; // -100… form
+                if (mc.getChat(chatId) == null) {
+                    android.widget.Toast.makeText(getParentActivity(), "אושר. אפשר למצוא אותו ברשימת הצ'אטים",
+                            android.widget.Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                args.putLong("chat_id", chatId);
+            }
+            presentFragment(new ChatActivity(args));
+        } else {
+            MessagesController.getInstance(currentAccount).openByUserName(t, this, 0);
         }
     }
 
@@ -614,6 +681,18 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 statusView.setTextColor(Theme.getColor(Theme.key_color_orange));
                 statusView.setTypeface(Typeface.DEFAULT_BOLD);
                 retryButton.setVisibility(View.GONE);
+            } else if ("approved".equals(item.requestStatus)) {
+                statusView.setText("אושרה ✓");
+                statusView.setTextColor(Theme.getColor(Theme.key_color_green));
+                statusView.setTypeface(Typeface.DEFAULT_BOLD);
+                retryButton.setVisibility(View.VISIBLE);
+                retryButton.setText(isPrivacy ? "הבנתי" : "פתח");
+                retryButton.setAlpha(1f);
+                retryButton.setEnabled(true);
+                retryButton.setOnClickListener(v -> {
+                    markDone(item);
+                    if (!isPrivacy) openApproved(item.chatUsername);
+                });
             } else {
                 statusView.setText("לא אושרה");
                 statusView.setTextColor(Theme.getColor(Theme.key_text_RedBold));
@@ -639,7 +718,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                             AskanFilter.getInstance().sendPrivacyRestoreRequest(me.phone,
                                     UserConfig.getInstance(currentAccount).getClientUserId(),
                                     item.privacyTarget,
-                                    () -> { if (adapter != null) adapter.notifyItemChanged(position); },
+                                    () -> { markDoneLater(item); if (adapter != null) adapter.notifyItemChanged(position); },
                                     () -> { item.retrySent = false; if (adapter != null) adapter.notifyItemChanged(position); });
                         } else {
                             Context parentCtx = getParentActivity();
@@ -649,7 +728,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                                     .getString("subj_" + item.chatUsername, "ערוץ");
                             AskanUiHelper.showAccessRequestNoteDialog(parentCtx, currentAccount,
                                     item.chatUsername, chatName2, savedSubject,
-                                    () -> { item.retrySent = true; if (adapter != null) adapter.notifyItemChanged(position); });
+                                    () -> { item.retrySent = true; markDoneLater(item); if (adapter != null) adapter.notifyItemChanged(position); });
                         }
                     });
                 }
