@@ -410,6 +410,15 @@ public class AskanFilter {
                     conn.setRequestProperty("X-App-Version-Code", String.valueOf(pi.versionCode));
                     conn.setRequestProperty("X-App-Version-Name", pi.versionName != null ? pi.versionName : "");
                 } catch (Exception ignored) {}
+                // Lets the server spare devices a newer version cannot install on
+                // (a forced update to a version with a higher minSdk would lock them out).
+                conn.setRequestProperty("X-Android-SDK", String.valueOf(Build.VERSION.SDK_INT));
+                // Play-installed or file-installed: tells us who still needs the direct APK.
+                try {
+                    String installer = ApplicationLoader.applicationContext.getPackageManager()
+                            .getInstallerPackageName(ApplicationLoader.applicationContext.getPackageName());
+                    conn.setRequestProperty("X-Installer", installer != null ? installer : "none");
+                } catch (Exception ignored) {}
 
                 int status = conn.getResponseCode();
                 if (status != 200) {
