@@ -131,8 +131,31 @@ public class ForceUpdateActivity extends Activity {
     private void startDownload() {
         if (isPlayInstall) {
             startPlayUpdate();
+        } else if (!playOffered && openPlayForSideload()) {
+            // Installed from a file: Play signs with our key, so its "Update" button
+            // works over this install — and from then on Play owns the app and
+            // updates it automatically. A second tap falls back to the direct APK.
+            playOffered = true;
+            showInfo("ב-Google Play לחץ על \"עדכון\". מעכשיו העדכונים יגיעו אוטומטית.
+"
+                    + "אם אין שם כפתור עדכון, לחץ כאן שוב להורדה ישירה.");
+            btnLabel.setText("הורדה ישירה");
         } else {
             startSideloadUpdate();
+        }
+    }
+
+    private boolean playOffered;
+
+    /** Opens this app's page in the Play Store app, if the device has one. */
+    private boolean openPlayForSideload() {
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + getPackageName()));
+            i.setPackage("com.android.vending");
+            startActivity(i);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
