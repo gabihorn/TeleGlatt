@@ -136,8 +136,7 @@ public class ForceUpdateActivity extends Activity {
             // works over this install — and from then on Play owns the app and
             // updates it automatically. A second tap falls back to the direct APK.
             playOffered = true;
-            showInfo("ב-Google Play לחץ על \"עדכון\". מעכשיו העדכונים יגיעו אוטומטית.
-"
+            showInfo("ב-Google Play לחץ על \"עדכון\". מעכשיו העדכונים יגיעו אוטומטית.\n"
                     + "אם אין שם כפתור עדכון, לחץ כאן שוב להורדה ישירה.");
             btnLabel.setText("הורדה ישירה");
         } else {
