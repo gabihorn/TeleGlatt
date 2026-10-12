@@ -313,4 +313,23 @@ public class AskanFilterTest {
         assertEquals(AskanFilter.BlockReason.NOT_BLOCKED,
                 filter.getUserBlockReason(user(500, "person", false)));
     }
+
+    // ── mini app navigation stays on its own site ──────────────────────────────
+    @Test
+    public void baseDomain_handlesTwoPartSuffixes() {
+        assertEquals("drivebot.co.il", AskanFilter.baseDomain("flows.drivebot.co.il"));
+        assertEquals("station-management-panel.com", AskanFilter.baseDomain("bot.station-management-panel.com"));
+        assertEquals("example.com", AskanFilter.baseDomain("WWW.Example.com."));
+        assertEquals("gov.il", AskanFilter.baseDomain("gov.il"));
+    }
+
+    @Test
+    public void miniAppNavigation_sameSiteOnly_unlessAllowed() throws Exception {
+        String home = AskanFilter.baseDomain("flows.drivebot.co.il");
+        assertTrue(filter.isMiniAppNavigationAllowed(home, "api.drivebot.co.il"));
+        assertFalse(filter.isMiniAppNavigationAllowed(home, "www.youtube.com"));
+        assertFalse(filter.isMiniAppNavigationAllowed(home, "drivebot.co.il.evil.com"));
+        seed("globalAllow", "web:waze.com");
+        assertTrue(filter.isMiniAppNavigationAllowed(home, "www.waze.com"));
+    }
 }

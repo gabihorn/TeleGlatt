@@ -7759,6 +7759,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
     private void checkAskanUpdateStatus() {
         if (onlySelect || folderId != 0 || getParentActivity() == null) return;
+        org.telegram.messenger.askan.AskanUiHelper.maybeShowIdentityDialog(this);
         org.telegram.messenger.askan.AskanFilter f = org.telegram.messenger.askan.AskanFilter.getInstance();
         String status = f.getUpdateCheckStatus();
         if (status == null || "ok".equals(status)) {

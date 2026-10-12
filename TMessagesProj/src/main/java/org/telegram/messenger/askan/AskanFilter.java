@@ -21,6 +21,7 @@ import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.UserConfig;
+import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
 
 import java.io.BufferedReader;
@@ -162,6 +163,9 @@ public class AskanFilter {
             body.put("telegram_id", telegramId);
             HttpResult result = postJson(SERVER_URL + "/api/auth/device", body, null);
 
+            if (result.code == 401 && result.body != null && result.body.contains("telegram_id_mismatch")) {
+                setIdentityMismatch(phone, true);
+            }
             if (result.code != 200) {
                 FileLog.e("AskanFilter: issueNewToken returned " + result.code);
                 return null;
@@ -176,12 +180,93 @@ public class AskanFilter {
             ApplicationLoader.applicationContext
                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putString(tokenKey(phone), tok).apply();
+            setIdentityMismatch(phone, false);
             Log.d("AskanFilter", "device_token acquired");
             return tok;
         } catch (Exception e) {
             FileLog.e("AskanFilter: issueNewToken failed", e);
             return null;
         }
+    }
+
+    // ─── Telegram account changed on the same number ──────────────────────────
+    //
+    // The server locks each phone to the Telegram account that first registered it.
+    // A customer who opens a NEW Telegram account on the same number is then refused
+    // a token (it looks like a hijack), and used to be silently stuck: no requests,
+    // no permission updates. The server now says so ("telegram_id_mismatch") and the
+    // user can prove ownership: the app sends their own contact to the official bot;
+    // Telegram itself vouches that the number belongs to the sending account.
+
+    private static final String VERIFY_BOT = "TeleGlatt_bot";
+    private static final String KEY_ID_MISMATCH = "id_mismatch_";
+
+    private void setIdentityMismatch(String phone, boolean mismatch) {
+        try {
+            SharedPreferences.Editor e = ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
+            if (mismatch) e.putBoolean(KEY_ID_MISMATCH + phone, true);
+            else e.remove(KEY_ID_MISMATCH + phone);
+            e.apply();
+        } catch (Exception ignored) {}
+    }
+
+    /** True when the server refused this phone because its Telegram account changed. */
+    public boolean hasIdentityMismatch(String phone) {
+        if (phone == null) return false;
+        try {
+            return ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean(KEY_ID_MISMATCH + phone, false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Sends the user's own contact to the official bot, then reconnects. */
+    public void verifyIdentity(int account, ResultCallback callback) {
+        TLRPC.User me = UserConfig.getInstance(account).getCurrentUser();
+        if (me == null || me.phone == null || me.phone.isEmpty()) {
+            if (callback != null) callback.onResult(false);
+            return;
+        }
+        final String phone = me.phone;
+        final long myId = me.id;
+        Runnable fail = () -> AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(false); });
+
+        TLRPC.TL_contacts_resolveUsername resolve = new TLRPC.TL_contacts_resolveUsername();
+        resolve.username = VERIFY_BOT;
+        ConnectionsManager.getInstance(account).sendRequest(resolve, (res, err) -> {
+            if (!(res instanceof TLRPC.TL_contacts_resolvedPeer)) { fail.run(); return; }
+            TLRPC.TL_contacts_resolvedPeer resolved = (TLRPC.TL_contacts_resolvedPeer) res;
+            TLRPC.User botUser = null;
+            for (TLRPC.User u : resolved.users) {
+                if (u != null && u.bot && u.username != null && u.username.equalsIgnoreCase(VERIFY_BOT)) {
+                    botUser = u;
+                    break;
+                }
+            }
+            if (botUser == null) { fail.run(); return; }
+
+            TLRPC.TL_inputPeerUser peer = new TLRPC.TL_inputPeerUser();
+            peer.user_id = botUser.id;
+            peer.access_hash = botUser.access_hash;
+            TLRPC.TL_inputMediaContact contact = new TLRPC.TL_inputMediaContact();
+            contact.phone_number = phone;
+            contact.first_name = me.first_name != null ? me.first_name : "";
+            contact.last_name = me.last_name != null ? me.last_name : "";
+            contact.vcard = "";
+            TLRPC.TL_messages_sendMedia send = new TLRPC.TL_messages_sendMedia();
+            send.peer = peer;
+            send.media = contact;
+            send.message = "";
+            send.random_id = org.telegram.messenger.Utilities.random.nextLong();
+            ConnectionsManager.getInstance(account).sendRequest(send, (res2, err2) -> {
+                if (err2 != null) { fail.run(); return; }
+                // Give the bot a moment to update the server, then ask for a token again.
+                AndroidUtilities.runOnUIThread(() -> resetConnection(phone, myId, callback), 3000);
+            });
+        });
     }
 
     /**
@@ -324,6 +409,15 @@ public class AskanFilter {
                             .getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
                     conn.setRequestProperty("X-App-Version-Code", String.valueOf(pi.versionCode));
                     conn.setRequestProperty("X-App-Version-Name", pi.versionName != null ? pi.versionName : "");
+                } catch (Exception ignored) {}
+                // Lets the server spare devices a newer version cannot install on
+                // (a forced update to a version with a higher minSdk would lock them out).
+                conn.setRequestProperty("X-Android-SDK", String.valueOf(Build.VERSION.SDK_INT));
+                // Play-installed or file-installed: tells us who still needs the direct APK.
+                try {
+                    String installer = ApplicationLoader.applicationContext.getPackageManager()
+                            .getInstallerPackageName(ApplicationLoader.applicationContext.getPackageName());
+                    conn.setRequestProperty("X-Installer", installer != null ? installer : "none");
                 } catch (Exception ignored) {}
 
                 int status = conn.getResponseCode();
@@ -638,6 +732,9 @@ public class AskanFilter {
         }
         sb.append("בקשות שממתינות לשליחה: ").append(getQueuedRequests(phone).size()).append('\n');
         sb.append("בדיקת גרסה: ").append(updateCheckStatus != null ? updateCheckStatus : "לא התקבלה").append('\n');
+        if (hasIdentityMismatch(phone)) {
+            sb.append("חשבון טלגרם: השתנה ולא אומת (השרת דוחה את החיבור)").append('\n');
+        }
 
         Context ctx = ApplicationLoader.applicationContext;
         try {
@@ -654,7 +751,20 @@ public class AskanFilter {
         try {
             boolean keepAlive = org.telegram.messenger.MessagesController.getMainSettings(account)
                     .getBoolean("askanKeepAlive", true);
-            sb.append("חיבור ברקע: ").append(keepAlive ? "פעיל" : "כבוי").append('\n');
+            sb.append("חיבור ברקע: ").append(keepAlive ? "מותר" : "כבוי");
+            if (keepAlive && ApplicationLoader.isFcmDeliveryWorking()) sb.append(" (לא נדרש, Firebase עובד)");
+            sb.append("\n");
+        } catch (Exception ignored) {}
+        try {
+            boolean hasToken = !android.text.TextUtils.isEmpty(org.telegram.messenger.SharedConfig.pushString);
+            boolean registered = UserConfig.getInstance(account).registeredForPush;
+            long last = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getLong("last_fcm_push", 0);
+            sb.append("Firebase: אסימון ").append(hasToken ? "קיים" : "חסר")
+                    .append(" · רשום בטלגרם: ").append(registered ? "כן" : "לא").append("\n");
+            sb.append("התראה אחרונה דרך Firebase: ");
+            if (last == 0) sb.append("עוד לא התקבלה");
+            else sb.append("לפני ").append((System.currentTimeMillis() - last) / 60000).append(" דקות");
+            sb.append("\n");
         } catch (Exception ignored) {}
         String canopy = detectCanopyDistributor();
         if (canopy != null) sb.append("סינון נוסף במכשיר: ").append(canopy).append('\n');
@@ -923,6 +1033,48 @@ public class AskanFilter {
                 || isManagedByTrustedBot(id, null);
     }
 
+    /**
+     * An allowed bot's mini app stays on the site it was opened on. Once a bot is
+     * approved its web view used to be a free browser: any link inside the page could
+     * take the user anywhere. Navigation is now limited to the opening site's domain
+     * (subdomains included); other sites need a global allow entry "web:<domain>".
+     */
+    public synchronized boolean isMiniAppNavigationAllowed(String homeDomain, String targetHost) {
+        String target = baseDomain(targetHost);
+        if (target == null) return true; // not a web address — handled elsewhere
+        if (target.equals(homeDomain)) return true;
+        return globalAllow.contains("web:" + target);
+    }
+
+    /** "flows.drivebot.co.il" → "drivebot.co.il", "a.b.example.com" → "example.com". */
+    public static String baseDomain(String host) {
+        if (host == null) return null;
+        host = host.trim().toLowerCase();
+        if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+        if (host.isEmpty()) return null;
+        if (host.matches("[0-9.]+") || host.contains(":")) return host; // IP address
+        String[] l = host.split("\\.");
+        if (l.length <= 2) return host;
+        String sld = l[l.length - 2];
+        boolean twoPartSuffix = l[l.length - 1].length() == 2
+                && (sld.equals("co") || sld.equals("org") || sld.equals("net") || sld.equals("ac")
+                || sld.equals("gov") || sld.equals("com") || sld.equals("edu") || sld.equals("muni")
+                || sld.equals("k12") || sld.equals("idf"));
+        int keep = twoPartSuffix ? 3 : 2;
+        StringBuilder sb = new StringBuilder();
+        for (int i = l.length - keep; i < l.length; i++) {
+            if (sb.length() > 0) sb.append('.');
+            sb.append(l[i]);
+        }
+        return sb.toString();
+    }
+
+    /** Opens an approved chat right away, without waiting for the next permissions sync. */
+    public synchronized void allowLocally(String username) {
+        String u = norm(username);
+        if (u != null && !u.isEmpty()) userAllow.add(u);
+    }
+
     public synchronized boolean shouldShowProfilePhotos() { return showProfilePhotos; }
     public synchronized boolean shouldShowStories() { return showStories; }
     public synchronized boolean isContentFilterEnabled() { return contentFilterEnabled; }
@@ -1025,8 +1177,12 @@ public class AskanFilter {
         void onResult(List<RequestInfo> requests);
     }
 
+    /** True only when the last /mine call returned a real list (not a failure). */
+    private volatile boolean lastMineOk;
+
     public void fetchMyRequests(String phone, long telegramId, RequestsCallback callback) {
         new Thread(() -> {
+            lastMineOk = false;
             try {
                 String token = acquireToken(phone, telegramId);
                 if (token == null) {
@@ -1054,6 +1210,7 @@ public class AskanFilter {
                 }
 
                 JSONArray arr = new JSONArray(r.body);
+                lastMineOk = true;
                 List<RequestInfo> list = new ArrayList<>();
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject obj = arr.getJSONObject(i);
@@ -1266,6 +1423,21 @@ public class AskanFilter {
                     editor.remove("pending_" + req.chatUsername);
                 }
                 editor.putString(key, req.status);
+            }
+            // A "pending" flag with no pending request behind it is stale: the request
+            // was answered in a way /mine stopped reporting (e.g. old server versions
+            // never returned "blocked"), and the chat kept showing "request pending"
+            // forever. Only trust an empty list when the call really succeeded.
+            if (lastMineOk) {
+                java.util.Set<String> stillPending = new HashSet<>();
+                for (RequestInfo req : requests) {
+                    if ("pending".equals(req.status) && req.chatUsername != null) stillPending.add(req.chatUsername.toLowerCase());
+                }
+                for (String k : prefs.getAll().keySet()) {
+                    if (k.startsWith("pending_") && !stillPending.contains(k.substring("pending_".length()).toLowerCase())) {
+                        editor.remove(k);
+                    }
+                }
             }
             editor.apply();
         });

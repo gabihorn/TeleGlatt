@@ -97,8 +97,44 @@ public class NotificationsService extends Service {
         } catch (Throwable e) {
             // Never let this kill the process: a failure here costs background
             // delivery, which is no worse than the behaviour it replaces.
+            // Typical causes: ForegroundServiceStartNotAllowedException (started from
+            // the background) or the dataSync daily budget already spent (Android 15+).
+            // We were started with startForegroundService, so staying alive without a
+            // foreground notification ends in ForegroundServiceDidNotStartInTimeException
+            // — a crash. Stop instead.
             FileLog.e("NotificationsService: startForeground failed", e);
+            stopSelfQuietly();
         }
+    }
+
+    /**
+     * Android 15+ caps dataSync foreground services at about 6 hours a day and then
+     * calls onTimeout. A service that does not stop within a few seconds crashes the
+     * app (ForegroundServiceDidNotStopInTimeException) — every user who kept the app
+     * in the background long enough hit it daily. Stop at once; push delivery (FCM)
+     * and the next app open take over.
+     */
+    @Override
+    public void onTimeout(int startId) {
+        stopSelfQuietly();
+    }
+
+    @Override
+    public void onTimeout(int startId, int fgsType) {
+        stopSelfQuietly();
+    }
+
+    private void stopSelfQuietly() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Throwable ignore) {}
+        try {
+            stopSelf();
+        } catch (Throwable ignore) {}
     }
 
     private void createChannel() {
