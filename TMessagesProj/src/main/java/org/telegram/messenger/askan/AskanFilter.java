@@ -21,6 +21,7 @@ import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.UserConfig;
+import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
 
 import java.io.BufferedReader;
@@ -162,6 +163,9 @@ public class AskanFilter {
             body.put("telegram_id", telegramId);
             HttpResult result = postJson(SERVER_URL + "/api/auth/device", body, null);
 
+            if (result.code == 401 && result.body != null && result.body.contains("telegram_id_mismatch")) {
+                setIdentityMismatch(phone, true);
+            }
             if (result.code != 200) {
                 FileLog.e("AskanFilter: issueNewToken returned " + result.code);
                 return null;
@@ -176,12 +180,93 @@ public class AskanFilter {
             ApplicationLoader.applicationContext
                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit().putString(tokenKey(phone), tok).apply();
+            setIdentityMismatch(phone, false);
             Log.d("AskanFilter", "device_token acquired");
             return tok;
         } catch (Exception e) {
             FileLog.e("AskanFilter: issueNewToken failed", e);
             return null;
         }
+    }
+
+    // ─── Telegram account changed on the same number ──────────────────────────
+    //
+    // The server locks each phone to the Telegram account that first registered it.
+    // A customer who opens a NEW Telegram account on the same number is then refused
+    // a token (it looks like a hijack), and used to be silently stuck: no requests,
+    // no permission updates. The server now says so ("telegram_id_mismatch") and the
+    // user can prove ownership: the app sends their own contact to the official bot;
+    // Telegram itself vouches that the number belongs to the sending account.
+
+    private static final String VERIFY_BOT = "TeleGlatt_bot";
+    private static final String KEY_ID_MISMATCH = "id_mismatch_";
+
+    private void setIdentityMismatch(String phone, boolean mismatch) {
+        try {
+            SharedPreferences.Editor e = ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
+            if (mismatch) e.putBoolean(KEY_ID_MISMATCH + phone, true);
+            else e.remove(KEY_ID_MISMATCH + phone);
+            e.apply();
+        } catch (Exception ignored) {}
+    }
+
+    /** True when the server refused this phone because its Telegram account changed. */
+    public boolean hasIdentityMismatch(String phone) {
+        if (phone == null) return false;
+        try {
+            return ApplicationLoader.applicationContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean(KEY_ID_MISMATCH + phone, false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Sends the user's own contact to the official bot, then reconnects. */
+    public void verifyIdentity(int account, ResultCallback callback) {
+        TLRPC.User me = UserConfig.getInstance(account).getCurrentUser();
+        if (me == null || me.phone == null || me.phone.isEmpty()) {
+            if (callback != null) callback.onResult(false);
+            return;
+        }
+        final String phone = me.phone;
+        final long myId = me.id;
+        Runnable fail = () -> AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(false); });
+
+        TLRPC.TL_contacts_resolveUsername resolve = new TLRPC.TL_contacts_resolveUsername();
+        resolve.username = VERIFY_BOT;
+        ConnectionsManager.getInstance(account).sendRequest(resolve, (res, err) -> {
+            if (!(res instanceof TLRPC.TL_contacts_resolvedPeer)) { fail.run(); return; }
+            TLRPC.TL_contacts_resolvedPeer resolved = (TLRPC.TL_contacts_resolvedPeer) res;
+            TLRPC.User botUser = null;
+            for (TLRPC.User u : resolved.users) {
+                if (u != null && u.bot && u.username != null && u.username.equalsIgnoreCase(VERIFY_BOT)) {
+                    botUser = u;
+                    break;
+                }
+            }
+            if (botUser == null) { fail.run(); return; }
+
+            TLRPC.TL_inputPeerUser peer = new TLRPC.TL_inputPeerUser();
+            peer.user_id = botUser.id;
+            peer.access_hash = botUser.access_hash;
+            TLRPC.TL_inputMediaContact contact = new TLRPC.TL_inputMediaContact();
+            contact.phone_number = phone;
+            contact.first_name = me.first_name != null ? me.first_name : "";
+            contact.last_name = me.last_name != null ? me.last_name : "";
+            contact.vcard = "";
+            TLRPC.TL_messages_sendMedia send = new TLRPC.TL_messages_sendMedia();
+            send.peer = peer;
+            send.media = contact;
+            send.message = "";
+            send.random_id = org.telegram.messenger.Utilities.random.nextLong();
+            ConnectionsManager.getInstance(account).sendRequest(send, (res2, err2) -> {
+                if (err2 != null) { fail.run(); return; }
+                // Give the bot a moment to update the server, then ask for a token again.
+                AndroidUtilities.runOnUIThread(() -> resetConnection(phone, myId, callback), 3000);
+            });
+        });
     }
 
     /**
@@ -638,6 +723,9 @@ public class AskanFilter {
         }
         sb.append("בקשות שממתינות לשליחה: ").append(getQueuedRequests(phone).size()).append('\n');
         sb.append("בדיקת גרסה: ").append(updateCheckStatus != null ? updateCheckStatus : "לא התקבלה").append('\n');
+        if (hasIdentityMismatch(phone)) {
+            sb.append("חשבון טלגרם: השתנה ולא אומת (השרת דוחה את החיבור)").append('\n');
+        }
 
         Context ctx = ApplicationLoader.applicationContext;
         try {

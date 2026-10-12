@@ -56,6 +56,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
     private static final int ACTION_COPY_STATUS  = 1;
     private static final int ACTION_SHARE_REPORT = 2;
     private static final int ACTION_RECONNECT    = 3;
+    private static final int ACTION_VERIFY_ID    = 4;
 
     private static final int MAX_DECIDED = 5;
 
@@ -349,6 +350,11 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         items.add(ListItem.privacy(true,  AskanFilter.getInstance().shouldShowProfilePhotos()));
         items.add(ListItem.privacy(false, AskanFilter.getInstance().shouldShowStories()));
         items.add(ListItem.header("תמיכה"));
+        TLRPC.User meForId = UserConfig.getInstance(currentAccount).getCurrentUser();
+        if (meForId != null && AskanFilter.getInstance().hasIdentityMismatch(meForId.phone)) {
+            items.add(ListItem.action(ACTION_VERIFY_ID, "אימות חשבון טלגרם",
+                    "החשבון השתנה והשרת לא מזהה אותו. לחץ לאימות"));
+        }
         items.add(ListItem.action(ACTION_COPY_STATUS, "העתקת פרטי מצב",
                 "פרטי החיבור של המכשיר, להדבקה בפנייה לתמיכה"));
         items.add(ListItem.action(ACTION_SHARE_REPORT, "שליחת דוח לתמיכה",
@@ -387,6 +393,10 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 } catch (Exception e) {
                     android.widget.Toast.makeText(ctx, "לא נמצאה אפליקציה לשליחה", android.widget.Toast.LENGTH_SHORT).show();
                 }
+                break;
+            }
+            case ACTION_VERIFY_ID: {
+                AskanUiHelper.showIdentityDialog(ctx, currentAccount);
                 break;
             }
             case ACTION_RECONNECT: {
