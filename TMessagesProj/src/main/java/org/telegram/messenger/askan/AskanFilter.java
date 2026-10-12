@@ -1168,8 +1168,12 @@ public class AskanFilter {
         void onResult(List<RequestInfo> requests);
     }
 
+    /** True only when the last /mine call returned a real list (not a failure). */
+    private volatile boolean lastMineOk;
+
     public void fetchMyRequests(String phone, long telegramId, RequestsCallback callback) {
         new Thread(() -> {
+            lastMineOk = false;
             try {
                 String token = acquireToken(phone, telegramId);
                 if (token == null) {
@@ -1197,6 +1201,7 @@ public class AskanFilter {
                 }
 
                 JSONArray arr = new JSONArray(r.body);
+                lastMineOk = true;
                 List<RequestInfo> list = new ArrayList<>();
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject obj = arr.getJSONObject(i);
@@ -1409,6 +1414,21 @@ public class AskanFilter {
                     editor.remove("pending_" + req.chatUsername);
                 }
                 editor.putString(key, req.status);
+            }
+            // A "pending" flag with no pending request behind it is stale: the request
+            // was answered in a way /mine stopped reporting (e.g. old server versions
+            // never returned "blocked"), and the chat kept showing "request pending"
+            // forever. Only trust an empty list when the call really succeeded.
+            if (lastMineOk) {
+                java.util.Set<String> stillPending = new HashSet<>();
+                for (RequestInfo req : requests) {
+                    if ("pending".equals(req.status) && req.chatUsername != null) stillPending.add(req.chatUsername.toLowerCase());
+                }
+                for (String k : prefs.getAll().keySet()) {
+                    if (k.startsWith("pending_") && !stillPending.contains(k.substring("pending_".length()).toLowerCase())) {
+                        editor.remove(k);
+                    }
+                }
             }
             editor.apply();
         });

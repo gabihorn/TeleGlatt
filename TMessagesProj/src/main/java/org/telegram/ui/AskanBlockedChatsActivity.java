@@ -321,7 +321,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 // Answered requests stay only until the user acts on them (open / dismiss)
                 // or the server's window runs out (approved 3 days, rejected 7), and only
                 // the newest few — so this section never turns into a list nobody clears.
-                else if (("approved".equals(r.status) || "rejected".equals(r.status))
+                else if (("approved".equals(r.status) || "rejected".equals(r.status) || "blocked".equals(r.status))
                         && r.id > 0 && !seen.getBoolean("done_" + r.id, false)
                         && decided.size() < MAX_DECIDED) decided.add(r);
             }
@@ -691,6 +691,16 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 statusView.setTextColor(Theme.getColor(Theme.key_color_orange));
                 statusView.setTypeface(Typeface.DEFAULT_BOLD);
                 retryButton.setVisibility(View.GONE);
+            } else if ("blocked".equals(item.requestStatus)) {
+                // Rejected and blocked by the team — asking again is pointless.
+                statusView.setText("לא אושרה");
+                statusView.setTextColor(Theme.getColor(Theme.key_text_RedBold));
+                statusView.setTypeface(Typeface.DEFAULT_BOLD);
+                retryButton.setVisibility(View.VISIBLE);
+                retryButton.setText("הבנתי");
+                retryButton.setAlpha(1f);
+                retryButton.setEnabled(true);
+                retryButton.setOnClickListener(v -> markDone(item));
             } else if ("approved".equals(item.requestStatus)) {
                 statusView.setText("אושרה ✓");
                 statusView.setTextColor(Theme.getColor(Theme.key_color_green));
