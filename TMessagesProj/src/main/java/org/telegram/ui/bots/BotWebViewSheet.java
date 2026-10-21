@@ -2003,7 +2003,18 @@ public class BotWebViewSheet extends Dialog implements NotificationCenter.Notifi
 
     @Override
     public void show() {
-        return; // Askan: Mini Apps disabled
+        // Askan: this full-screen sheet was switched off outright, so mini apps opened
+        // from a keyboard button or a bot link never appeared — even for approved bots
+        // (@KalpiClickerBot). The network layer already refuses web views of bots that
+        // are not allowed; here we just avoid showing an empty sheet for them, and keep
+        // chat-join guard pages off.
+        // A plain URL with no bot behind it (TYPE_FAKE_WEB_VIEW) would be a free browser.
+        if (requestProps == null || requestProps.type == TYPE_FAKE_WEB_VIEW
+                || requestProps.type == BotWebViewAttachedSheet.TYPE_WEB_VIEW_GUARD) return;
+        TLRPC.User bot = requestProps.botUser != null ? requestProps.botUser
+                : MessagesController.getInstance(requestProps.currentAccount).getUser(requestProps.botId);
+        if (bot == null || org.telegram.messenger.askan.AskanFilter.getInstance().isUserBlocked(bot)) return;
+        showInternal();
     }
     private void showInternal() {
         if (!AndroidUtilities.isSafeToShow(getContext())) return;
