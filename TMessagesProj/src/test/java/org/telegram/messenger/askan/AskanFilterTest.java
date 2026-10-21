@@ -313,4 +313,39 @@ public class AskanFilterTest {
         assertEquals(AskanFilter.BlockReason.NOT_BLOCKED,
                 filter.getUserBlockReason(user(500, "person", false)));
     }
+
+    // ── mini app navigation stays on its own site ──────────────────────────────
+    @Test
+    public void baseDomain_handlesTwoPartSuffixes() {
+        assertEquals("drivebot.co.il", AskanFilter.baseDomain("flows.drivebot.co.il"));
+        assertEquals("station-management-panel.com", AskanFilter.baseDomain("bot.station-management-panel.com"));
+        assertEquals("example.com", AskanFilter.baseDomain("WWW.Example.com."));
+        assertEquals("gov.il", AskanFilter.baseDomain("gov.il"));
+    }
+
+    @Test
+    public void miniAppNavigation_sameSiteOnly_unlessAllowed() throws Exception {
+        String home = AskanFilter.baseDomain("flows.drivebot.co.il");
+        assertTrue(filter.isMiniAppNavigationAllowed(home, "api.drivebot.co.il"));
+        assertFalse(filter.isMiniAppNavigationAllowed(home, "www.youtube.com"));
+        assertFalse(filter.isMiniAppNavigationAllowed(home, "drivebot.co.il.evil.com"));
+        seed("globalAllow", "web:waze.com");
+        assertTrue(filter.isMiniAppNavigationAllowed(home, "www.waze.com"));
+    }
+
+    // ── bot apps (t.me/bot/app) carry only an app id; the sheet vouches for the bot ──
+    @Test
+    public void appWebView_approvedOnlyForAllowedBot_andOnlyOnce() throws Exception {
+        seed("globalAllow", "777");
+        org.telegram.tgnet.TLRPC.TL_user allowed = new org.telegram.tgnet.TLRPC.TL_user();
+        allowed.id = 777;
+        org.telegram.tgnet.TLRPC.TL_user other = new org.telegram.tgnet.TLRPC.TL_user();
+        other.id = 888;
+        Object req1 = new Object(), req2 = new Object();
+        assertTrue(filter.approveAppWebView(req1, allowed));
+        assertFalse(filter.approveAppWebView(req2, other));
+        assertTrue(filter.consumeAppWebViewApproval(req1));
+        assertFalse(filter.consumeAppWebViewApproval(req1)); // single use
+        assertFalse(filter.consumeAppWebViewApproval(req2));
+    }
 }

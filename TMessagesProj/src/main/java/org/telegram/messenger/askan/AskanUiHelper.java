@@ -39,6 +39,42 @@ public class AskanUiHelper {
 
     private static final int BRAND_NAVY = 0xFF1A1A6E;
 
+    private static long identityDialogShownAt;
+
+    /**
+     * Shown on the chat list when the server refuses this number because the user
+     * opened a new Telegram account on it. At most once every few hours.
+     */
+    public static void maybeShowIdentityDialog(org.telegram.ui.ActionBar.BaseFragment fragment) {
+        if (fragment == null || fragment.getParentActivity() == null) return;
+        int account = fragment.getCurrentAccount();
+        TLRPC.User me = UserConfig.getInstance(account).getCurrentUser();
+        if (me == null || !AskanFilter.getInstance().hasIdentityMismatch(me.phone)) return;
+        long now = System.currentTimeMillis();
+        if (now - identityDialogShownAt < 6 * 60 * 60 * 1000L) return;
+        identityDialogShownAt = now;
+        showIdentityDialog(fragment.getParentActivity(), account);
+    }
+
+    public static void showIdentityDialog(Context ctx, int account) {
+        new AlertDialog.Builder(ctx)
+                .setTitle("חשבון הטלגרם השתנה")
+                .setMessage("נראה שנפתח חשבון טלגרם חדש על המספר הזה, ולכן שרת הסינון לא מזהה אותו. "
+                        + "עד שהחשבון יאומת, בקשות לא נשלחות וההרשאות לא מתעדכנות.\n\n"
+                        + "האימות אוטומטי: TeleGlatt ישלח את המספר שלך לבוט הרשמי @TeleGlatt_bot, "
+                        + "וטלגרם תאשר שהוא שייך לחשבון הזה.")
+                .setPositiveButton("אמת עכשיו", (d, w) -> {
+                    Toast.makeText(ctx, "מאמת את החשבון...", Toast.LENGTH_SHORT).show();
+                    AskanFilter.getInstance().verifyIdentity(account, ok ->
+                            Toast.makeText(ctx, ok
+                                    ? "החשבון אומת. הכל חזר לעבוד"
+                                    : "האימות לא הצליח. אפשר לשלוח דוח לתמיכה מאזור השליטה",
+                                    Toast.LENGTH_LONG).show());
+                })
+                .setNegativeButton("לא עכשיו", null)
+                .show();
+    }
+
     /**
      * Single shared "blocked content" bottom sheet. Used by both ChatActivity
      * (opening a blocked chat) and LaunchActivity (opening a blocked link),

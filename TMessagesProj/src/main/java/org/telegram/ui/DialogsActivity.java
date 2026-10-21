@@ -213,6 +213,7 @@ import org.telegram.ui.Stars.StarGiftSheet;
 import org.telegram.ui.Stars.StarsController;
 import org.telegram.ui.Stars.StarsIntroActivity;
 import org.telegram.ui.Stories.StealthModeAlert;
+import org.telegram.ui.Stories.recorder.ButtonWithCounterView;
 import org.telegram.ui.bots.BotWebViewSheet;
 import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.BulletinFactory;
@@ -7759,6 +7760,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
     private void checkAskanUpdateStatus() {
         if (onlySelect || folderId != 0 || getParentActivity() == null) return;
+        org.telegram.messenger.askan.AskanUiHelper.maybeShowIdentityDialog(this);
         org.telegram.messenger.askan.AskanFilter f = org.telegram.messenger.askan.AskanFilter.getInstance();
         String status = f.getUpdateCheckStatus();
         if (status == null || "ok".equals(status)) {

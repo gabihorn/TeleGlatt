@@ -1070,6 +1070,11 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
             mUrl = url;
             checkCreateWebView();
             if (webView != null) {
+                if (bot) {
+                    try {
+                        webView.askanHomeDomain = org.telegram.messenger.askan.AskanFilter.baseDomain(Uri.parse(url).getHost());
+                    } catch (Exception ignore) {}
+                }
                 webView.onResume();
                 webView.loadUrl(url);
             }
@@ -3924,6 +3929,9 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
         private BrowserHistory.Entry currentHistoryEntry;
 
         public MyWebView opener;
+        // Askan: the site this bot mini app was opened on; navigation is kept inside it.
+        public String askanHomeDomain;
+        private boolean askanSubframe;
         public boolean errorShown;
         public String errorShownAt;
 
@@ -4325,11 +4333,39 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
                         d("shouldOverrideUrlLoading("+url+") = true");
                         return true;
                     }
+                    // Askan: a bot mini app may not wander off to other sites. A redirect
+                    // before the first page finishes is the bot's own choice of URL, so the
+                    // home domain follows it; after that, other domains are blocked.
+                    if (bot && !askanSubframe && askanHomeDomain != null && uriNew != null
+                            && uriNew.getScheme() != null
+                            && ("https".equalsIgnoreCase(uriNew.getScheme()) || "http".equalsIgnoreCase(uriNew.getScheme()))) {
+                        if (!isPageLoaded) {
+                            String nd = org.telegram.messenger.askan.AskanFilter.baseDomain(uriNew.getHost());
+                            if (nd != null) askanHomeDomain = nd;
+                        } else if (!org.telegram.messenger.askan.AskanFilter.getInstance()
+                                .isMiniAppNavigationAllowed(askanHomeDomain, uriNew.getHost())) {
+                            d("shouldOverrideUrlLoading("+url+") = true (askan: other site)");
+                            android.widget.Toast.makeText(getContext(), "הקישור חסום באפליקציה", android.widget.Toast.LENGTH_SHORT).show();
+                            return true;
+                        }
+                    }
                     if (uriNew != null) {
                         currentUrl = uriNew.toString();
                     }
                     d("shouldOverrideUrlLoading("+url+") = false");
                     return false;
+                }
+
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    if (request == null || request.getUrl() == null) return false;
+                    // Embedded frames (maps, payment widgets) are not the page the user sees.
+                    askanSubframe = !request.isForMainFrame();
+                    try {
+                        return shouldOverrideUrlLoading(view, request.getUrl().toString());
+                    } finally {
+                        askanSubframe = false;
+                    }
                 }
 
                 private final Runnable resetErrorRunnable = () -> {
