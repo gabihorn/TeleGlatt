@@ -1033,6 +1033,30 @@ public class AskanFilter {
                 || isManagedByTrustedBot(id, null);
     }
 
+    // requestAppWebView names the app by id only, so ConnectionsManager cannot tell which
+    // bot it belongs to. The sheet that builds it knows the bot: it checks here first and
+    // the approval is attached to that exact request object, used once.
+    private final java.util.Set<Object> approvedAppWebViews =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    public boolean approveAppWebView(Object request, TLRPC.User bot) {
+        if (request == null || bot == null) return false;
+        TLRPC.TL_inputUser input = new TLRPC.TL_inputUser();
+        input.user_id = bot.id;
+        input.access_hash = bot.access_hash;
+        if (!isInlineBotAllowed(input)) return false;
+        synchronized (approvedAppWebViews) {
+            approvedAppWebViews.add(request);
+        }
+        return true;
+    }
+
+    public boolean consumeAppWebViewApproval(Object request) {
+        synchronized (approvedAppWebViews) {
+            return approvedAppWebViews.remove(request);
+        }
+    }
+
     /**
      * An allowed bot's mini app stays on the site it was opened on. Once a bot is
      * approved its web view used to be a free browser: any link inside the page could

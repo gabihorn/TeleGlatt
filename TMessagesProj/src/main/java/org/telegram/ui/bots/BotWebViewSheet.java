@@ -1604,6 +1604,8 @@ public class BotWebViewSheet extends Dialog implements NotificationCenter.Notifi
                             : MessagesController.getInputPeer(props.botUser);
                     req.compact = props.compact;
                     req.fullscreen = props.fullscreen;
+                    // Askan: vouch for the bot so the network layer lets this app through.
+                    org.telegram.messenger.askan.AskanFilter.getInstance().approveAppWebView(req, props.botUser);
 
                     if (!TextUtils.isEmpty(props.startParam)) {
                         req.start_param = props.startParam;

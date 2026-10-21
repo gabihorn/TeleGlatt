@@ -332,4 +332,20 @@ public class AskanFilterTest {
         seed("globalAllow", "web:waze.com");
         assertTrue(filter.isMiniAppNavigationAllowed(home, "www.waze.com"));
     }
+
+    // ── bot apps (t.me/bot/app) carry only an app id; the sheet vouches for the bot ──
+    @Test
+    public void appWebView_approvedOnlyForAllowedBot_andOnlyOnce() throws Exception {
+        seed("globalAllow", "777");
+        org.telegram.tgnet.TLRPC.TL_user allowed = new org.telegram.tgnet.TLRPC.TL_user();
+        allowed.id = 777;
+        org.telegram.tgnet.TLRPC.TL_user other = new org.telegram.tgnet.TLRPC.TL_user();
+        other.id = 888;
+        Object req1 = new Object(), req2 = new Object();
+        assertTrue(filter.approveAppWebView(req1, allowed));
+        assertFalse(filter.approveAppWebView(req2, other));
+        assertTrue(filter.consumeAppWebViewApproval(req1));
+        assertFalse(filter.consumeAppWebViewApproval(req1)); // single use
+        assertFalse(filter.consumeAppWebViewApproval(req2));
+    }
 }

@@ -451,7 +451,12 @@ public class ConnectionsManager extends BaseController {
         // and requestChatJoinWebView (a join-verification page run by a group's bot)
         // carries only a query_id — no bot to check against the allow list in either,
         // so both are denied outright.
+        // A bot app ("t.me/bot/app") is let through only when the sheet that built the
+        // request vouched for its bot first (AskanFilter.approveAppWebView).
         if (object instanceof TLRPC.TL_messages_requestAppWebView
+                && org.telegram.messenger.askan.AskanFilter.getInstance().consumeAppWebViewApproval(object)) {
+            // approved bot — fall through
+        } else if (object instanceof TLRPC.TL_messages_requestAppWebView
                 || object instanceof TLRPC.TL_messages_requestChatJoinWebView) {
             if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked app web view request");
             return;
