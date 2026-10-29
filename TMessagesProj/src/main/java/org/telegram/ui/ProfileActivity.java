@@ -1736,7 +1736,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     int top = sharedMediaLayout.getTop();
                     if (top == 0) {
                         consumed[1] = dyUnconsumed;
-                        innerListView.scrollBy(0, dyUnconsumed);
+                        scrollInnerSafely(innerListView, dyUnconsumed);
                     }
                 }
             } catch (Throwable e) {
@@ -1764,6 +1764,17 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             return super.onNestedPreFling(target, velocityX, velocityY);
         }
 
+        // TeleGlatt: scrolling the shared-media list while its adapter is being
+        // refreshed threw IndexOutOfBoundsException in 2.3.1 (Play vitals). A skipped
+        // scroll step is invisible; the crash was not.
+        private void scrollInnerSafely(RecyclerListView innerListView, int dy) {
+            try {
+                innerListView.scrollBy(0, dy);
+            } catch (IndexOutOfBoundsException e) {
+                FileLog.e(e);
+            }
+        }
+
         @Override
         public void onNestedPreScroll(View target, int dx, int dy, int[] consumed, int type) {
             if (target == listView && sharedMediaRow != -1 && sharedMediaLayoutAttached) {
@@ -1782,7 +1793,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                                 int paddingTop = innerListView.getPaddingTop();
                                 if (top != paddingTop || pos != 0) {
                                     consumed[1] = pos != 0 ? dy : Math.max(dy, (top - paddingTop));
-                                    innerListView.scrollBy(0, dy);
+                                    scrollInnerSafely(innerListView, dy);
                                     scrolledInner = true;
                                 }
                             }
@@ -1803,7 +1814,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                             consumed[1] -= dy;
                         }
                         if (innerListView != null && consumed[1] > 0) {
-                            innerListView.scrollBy(0, consumed[1]);
+                            scrollInnerSafely(innerListView, consumed[1]);
                         }
                     }
                 }

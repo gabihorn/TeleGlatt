@@ -706,18 +706,24 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
     }
 
     private void runWithPermissions(String[] permissions, Consumer<Boolean> callback) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            callback.accept(true);
-        } else {
-            if (checkPermissions(permissions)) {
+        // TeleGlatt: a mini app asking for location/camera/mic crashed 2.3.1 with an NPE
+        // here (Play vitals, no stack). Losing the permission prompt beats crashing the app.
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
                 callback.accept(true);
             } else {
-                onPermissionsRequestResultCallback = ()-> callback.accept(checkPermissions(permissions));
+                if (checkPermissions(permissions)) {
+                    callback.accept(true);
+                } else {
+                    onPermissionsRequestResultCallback = ()-> callback.accept(checkPermissions(permissions));
 
-                if (parentActivity != null) {
-                    parentActivity.requestPermissions(permissions, REQUEST_CODE_WEB_PERMISSION);
+                    if (parentActivity != null) {
+                        parentActivity.requestPermissions(permissions, REQUEST_CODE_WEB_PERMISSION);
+                    }
                 }
             }
+        } catch (NullPointerException e) {
+            FileLog.e(e);
         }
     }
 
