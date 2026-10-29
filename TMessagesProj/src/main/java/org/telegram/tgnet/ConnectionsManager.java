@@ -86,6 +86,8 @@ public class ConnectionsManager extends BaseController {
     public final static int ConnectionTypeUpload = 4;
     public final static int ConnectionTypePush = 8;
     public final static int ConnectionTypeDownload2 = ConnectionTypeDownload | (1 << 16);
+    // Keep in sync with DOWNLOAD_CONNECTIONS_COUNT in tgnet/Defines.h.
+    public final static int DownloadConnectionsCount = 8;
 
     public final static int FileTypePhoto = 0x01000000;
     public final static int FileTypeVideo = 0x02000000;
@@ -103,6 +105,8 @@ public class ConnectionsManager extends BaseController {
     public final static int RequestFlagDoNotWaitFloodWait = 1024;
     public final static int RequestFlagListenAfterCancel = 2048;
     public final static int RequestFlagFailOnServerErrorsExceptFloodWait = 65536;
+    public final static int RequestFlagSmallDownload = 131072;
+    public final static int RequestFlagDownloadByteBudget = 262144;
 
     public final static int ConnectionStateConnecting = 1;
     public final static int ConnectionStateWaitingForNetwork = 2;
@@ -447,7 +451,12 @@ public class ConnectionsManager extends BaseController {
         // and requestChatJoinWebView (a join-verification page run by a group's bot)
         // carries only a query_id — no bot to check against the allow list in either,
         // so both are denied outright.
+        // A bot app ("t.me/bot/app") is let through only when the sheet that built the
+        // request vouched for its bot first (AskanFilter.approveAppWebView).
         if (object instanceof TLRPC.TL_messages_requestAppWebView
+                && org.telegram.messenger.askan.AskanFilter.getInstance().consumeAppWebViewApproval(object)) {
+            // approved bot — fall through
+        } else if (object instanceof TLRPC.TL_messages_requestAppWebView
                 || object instanceof TLRPC.TL_messages_requestChatJoinWebView) {
             if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked app web view request");
             return;
@@ -460,6 +469,16 @@ public class ConnectionsManager extends BaseController {
         if (object instanceof TLRPC.TL_messages_searchStickers
                 || object instanceof TLRPC.TL_messages_searchCustomEmoji) {
             if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked sticker/emoji search");
+            return;
+        }
+        // Telegram's recommendations — "similar channels" after joining and on a
+        // channel's profile, "channels you may like" in search, similar bots and the
+        // popular mini-app list. All of them advertise unfiltered chats; without a
+        // response the sections simply stay empty.
+        if (object instanceof TLRPC.TL_channels_getChannelRecommendations
+                || object instanceof org.telegram.tgnet.tl.TL_bots.getBotRecommendations
+                || object instanceof org.telegram.tgnet.tl.TL_bots.getPopularAppBots) {
+            if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked recommendations");
             return;
         }
         if (BuildVars.LOGS_ENABLED) {
@@ -543,7 +562,18 @@ public class ConnectionsManager extends BaseController {
                     FileLog.e(e);
                 }
             }, onQuickAck, onWriteToSocket);
-            native_sendRequest(currentAccount, buffer.address, flags, datacenterId, connectionType, immediate, requestToken);
+            int downloadSize = 0;
+            // Only FileLoadOperation opts in. Live call segments retain their existing scheduling.
+            if ((flags & RequestFlagDownloadByteBudget) != 0 && (connectionType & 0xffff) == ConnectionTypeDownload) {
+                if (object instanceof TLRPC.TL_upload_getFile) {
+                    downloadSize = ((TLRPC.TL_upload_getFile) object).limit;
+                } else if (object instanceof TLRPC.TL_upload_getWebFile) {
+                    downloadSize = ((TLRPC.TL_upload_getWebFile) object).limit;
+                } else if (object instanceof TLRPC.TL_upload_getCdnFile) {
+                    downloadSize = ((TLRPC.TL_upload_getCdnFile) object).limit;
+                }
+            }
+            native_sendRequest(currentAccount, buffer.address, flags, datacenterId, connectionType, immediate, requestToken, downloadSize);
         } catch (Exception e) {
             FileLog.e(e);
         }
@@ -858,15 +888,16 @@ public class ConnectionsManager extends BaseController {
         }
     }
 
+    @Keep
     public static void onUnparsedMessageReceived(long address, final int currentAccount, long messageId) {
         try {
             NativeByteBuffer buff = NativeByteBuffer.wrap(address);
             buff.setDataSourceType(TLDataSourceType.NETWORK);
             buff.reused = true;
             int constructor = buff.readInt32(true);
-            final TLObject message = TLClassStore.Instance().TLdeserialize(buff, constructor, true);
+            final TLRPC.Updates message = TLRPC.Updates.TLdeserialize(buff, constructor, true);
             FileLog.dumpUnparsedMessage(message, messageId, currentAccount);
-            if (message instanceof TLRPC.Updates) {
+            if (message != null) {
                 if (BuildVars.LOGS_ENABLED) {
                     FileLog.d("java received " + message);
                 }
@@ -1066,7 +1097,7 @@ public class ConnectionsManager extends BaseController {
     public static native int native_getCurrentDatacenterId(int currentAccount);
     public static native long native_getCurrentAuthKeyId(int currentAccount);
     public static native int native_getTimeDifference(int currentAccount);
-    public static native void native_sendRequest(int currentAccount, long object, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken);
+    public static native void native_sendRequest(int currentAccount, long object, int flags, int datacenterId, int connectionType, boolean immediate, int requestToken, int downloadSize);
     public static native void native_cancelRequest(int currentAccount, int token, boolean notifyServer);
     public static native void native_cleanUp(int currentAccount, boolean resetKeys);
     public static native void native_cancelRequestsForGuid(int currentAccount, int guid);

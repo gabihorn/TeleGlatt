@@ -372,6 +372,18 @@ public class ApplicationLoader extends Application {
         NotificationCenter.sanitize();
     });
 
+    /** True when a Firebase push arrived in the last 48 hours and a token is registered. */
+    public static boolean isFcmDeliveryWorking() {
+        try {
+            long last = applicationContext.getSharedPreferences("askan_filter", Context.MODE_PRIVATE)
+                    .getLong("last_fcm_push", 0);
+            return !android.text.TextUtils.isEmpty(SharedConfig.pushString)
+                    && System.currentTimeMillis() - last < 48L * 60 * 60 * 1000;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     public static void startPushService() {
         SharedPreferences preferences = MessagesController.getGlobalNotificationsSettings();
         boolean enabled;
@@ -393,6 +405,13 @@ public class ApplicationLoader extends Application {
             // meaningless here. Default on, and let the user turn it off in settings.
             enabled = MessagesController.getMainSettings(UserConfig.selectedAccount)
                     .getBoolean("askanKeepAlive", true);
+            // Since 2.2.2 the app has its own Firebase project registered with Telegram,
+            // so pushes can arrive the normal way. Once one has arrived recently the
+            // keep-alive is only burning battery (a Play review complained) — stand it
+            // down. If pushes stop for two days it comes back on the next start.
+            if (enabled && isFcmDeliveryWorking()) {
+                enabled = false;
+            }
         }
         if (enabled) {
             try {
