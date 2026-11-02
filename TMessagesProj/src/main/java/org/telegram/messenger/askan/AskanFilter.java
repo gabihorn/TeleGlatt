@@ -1107,12 +1107,15 @@ public class AskanFilter {
 
     /**
      * Returns true if text contains a blocked word at a word boundary.
-     * Blocked words override all allow-lists — no channel is exempt.
+     * A chat an admin approved (globally or for this user) is exempt: the words exist to
+     * catch chats nobody reviewed, and opening the chat (ChatActivity) already honours
+     * the approval - search, notifications and "next channel" must agree with it.
      * Uses character-level boundary check (works for Hebrew and Latin).
      */
     public synchronized boolean containsBlockedWordForChat(String text, String chatId, String username) {
         if (!contentFilterEnabled) return false;
         if (text == null || text.isEmpty()) return false;
+        if (isExplicitlyAllowed(chatId, username)) return false;
         String lower = text.toLowerCase();
         for (String word : blockedWords) {
             if (matchesWordBoundary(lower, word.toLowerCase())) return true;

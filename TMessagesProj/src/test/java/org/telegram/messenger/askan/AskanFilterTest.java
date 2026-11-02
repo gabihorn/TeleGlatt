@@ -269,6 +269,15 @@ public class AskanFilterTest {
     }
 
     @Test
+    public void blockedWordInTitle_approvedChatIsExempt() throws Exception {
+        setFlag("contentFilterEnabled", true);
+        seed("blockedWords", "series");
+        seed("userAllow", "3986735639");
+        assertFalse(filter.containsBlockedWordForChat("hd series live", "3986735639", null));
+        assertTrue(filter.containsBlockedWordForChat("hd series live", "123", null)); // not approved
+    }
+
+    @Test
     public void contentFilterDisabled_neverMatches() throws Exception {
         setFlag("contentFilterEnabled", false);
         seed("blockedWords", "spam");
