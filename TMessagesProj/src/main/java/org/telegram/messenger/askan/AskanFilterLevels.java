@@ -18,6 +18,7 @@ public final class AskanFilterLevels {
     public static final String PRIVATE_MEDIA   = "private_media";
     public static final String GROUP_MEDIA     = "group_media";
     public static final String VIDEOS          = "videos";
+    public static final String MEDIA_BLUR      = "media_blur";
     public static final String STORIES         = "stories";
     public static final String PROFILE_PHOTOS  = "profile_photos";
     public static final String BASIC_GROUPS    = "basic_groups";
@@ -50,6 +51,7 @@ public final class AskanFilterLevels {
                 "contacts_photos", f("contacts", "photos"), "none", f("contacts", "photos", "none"));
         opt(GROUP_MEDIA, "מדיה בקבוצות", "all", "all", f(), "photos", f("photos"), "none", f("photos", "none"));
         opt(VIDEOS, "סרטונים והודעות וידאו", "show", "show", f(), "hide", f("hide"));
+        opt(MEDIA_BLUR, "טשטוש תמונות וסרטונים", "off", "off", f(), "blur", f("blur"));
         opt(STORIES, "סטוריז", "show", "show", f(), "hide", f("hide"));
         opt(PROFILE_PHOTOS, "תמונות פרופיל", "show", "show", f(), "hide", f("hide"));
         opt(BASIC_GROUPS, "קבוצות קטנות", "open", "open", f(), "request", f("request"));
@@ -67,6 +69,8 @@ public final class AskanFilterLevels {
         VALUE_LABELS.put("request", "דורשות בקשה");
         VALUE_LABELS.put("allow", "מותר");
         VALUE_LABELS.put("block", "חסום");
+        VALUE_LABELS.put("off", "כבוי");
+        VALUE_LABELS.put("blur", "מטושטש עד לחיצה");
     }
 
     public static boolean isValid(String option, String value) {

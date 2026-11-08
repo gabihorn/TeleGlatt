@@ -427,4 +427,18 @@ public class AskanFilterTest {
         assertTrue(AskanFilterLevels.isStricter("videos", "hide", "show"));
         assertFalse(AskanFilterLevels.isStricter("videos", "show", "show"));
     }
+
+    @Test
+    public void filterLevels_blurMarksCopyAsSpoilerOnly() throws Exception {
+        TLRPC.Message m = photoMessage(userPeer(5));
+        assertFalse(filter.shouldBlurMedia(m));
+        setOption(AskanFilterLevels.MEDIA_BLUR, "blur");
+        assertTrue(filter.shouldBlurMedia(m));
+        TLRPC.Message c = AskanFilter.copyWithSpoiler(m);
+        assertTrue(c.media.spoiler);
+        assertFalse(m.media.spoiler);
+        assertEquals("caption", c.message);
+        m.out = true;
+        assertFalse(filter.shouldBlurMedia(m));
+    }
 }

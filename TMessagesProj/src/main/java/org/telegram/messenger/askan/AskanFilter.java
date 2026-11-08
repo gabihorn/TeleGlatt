@@ -1221,6 +1221,48 @@ public class AskanFilter {
         return false;
     }
 
+    /**
+     * Filter level "blur": photos and videos that are shown at all appear blurred
+     * until tapped (Telegram's own spoiler cover). Own outgoing media is never blurred.
+     */
+    public boolean shouldBlurMedia(TLRPC.Message m) {
+        if (m == null || m.action != null || m.out || m.media == null || m.media.spoiler) return false;
+        if (!"blur".equals(getFilterOption(AskanFilterLevels.MEDIA_BLUR))) return false;
+        if (m.media instanceof TLRPC.TL_messageMediaPhoto) return m.media.photo != null;
+        if (!(m.media instanceof TLRPC.TL_messageMediaDocument) || m.media.document == null) return false;
+        TLRPC.Document d = m.media.document;
+        if (MessageObject.isStickerDocument(d) || MessageObject.isAnimatedStickerDocument(d, true)) return false;
+        String mime = d.mime_type != null ? d.mime_type : "";
+        return MessageObject.isVideoDocument(d) || MessageObject.isRoundVideoDocument(d)
+                || MessageObject.isGifDocument(d) || mime.startsWith("video/") || mime.startsWith("image/");
+    }
+
+    /** A display copy whose media carries the spoiler flag; the original is untouched. */
+    public static TLRPC.Message copyWithSpoiler(TLRPC.Message m) {
+        try {
+            TLRPC.Message c = shallowCopy(m);
+            c.media = shallowCopy(m.media);
+            c.media.spoiler = true;
+            return c;
+        } catch (Throwable e) {
+            FileLog.e("AskanFilter: copyWithSpoiler failed", e);
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T shallowCopy(T o) throws Exception {
+        T c = (T) o.getClass().newInstance();
+        for (Class<?> k = o.getClass(); k != null && k != Object.class; k = k.getSuperclass()) {
+            for (java.lang.reflect.Field f : k.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                f.setAccessible(true);
+                f.set(c, f.get(o));
+            }
+        }
+        return c;
+    }
+
     private static boolean isGroupPeer(int account, long channelId) {
         TLRPC.Chat c = MessagesController.getInstance(account).getChat(channelId);
         return c != null && ChatObject.isMegagroup(c);

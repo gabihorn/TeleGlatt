@@ -1931,6 +1931,9 @@ public class MessageObject {
                 message = hidden;
                 askanMediaHidden = true;
             }
+        } else if (!isRepostPreview && org.telegram.messenger.askan.AskanFilter.getInstance().shouldBlurMedia(message)) {
+            TLRPC.Message blurred = org.telegram.messenger.askan.AskanFilter.copyWithSpoiler(message);
+            if (blurred != null) message = blurred;
         }
         messageOwner = message;
         replyMessageObject = replyToMessage;
