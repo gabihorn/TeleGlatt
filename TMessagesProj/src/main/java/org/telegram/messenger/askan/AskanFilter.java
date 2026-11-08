@@ -19,6 +19,8 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.MessageObject;
+import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.ConnectionsManager;
@@ -48,6 +50,11 @@ public class AskanFilter {
     private boolean showStories = true;
     private int maxMegagroupSize = 250;
     private boolean contentFilterEnabled = false;
+    // Filter levels (server: src/filterLevels.js). Effective value per option and
+    // the request state per option ("ok" | "cooldown" | "admin_only", plus until).
+    private final java.util.Map<String, String> filterOptions = new java.util.HashMap<>(AskanFilterLevels.BASIC);
+    private final java.util.Map<String, String[]> filterLocks = new java.util.HashMap<>();
+    private String filterLevel = "basic";
     // "ok" | "soft" | "hard" — null means no check received yet (fail-open)
     private volatile String updateCheckStatus = null;
     private volatile String updateCheckUrl = "";
@@ -802,6 +809,8 @@ public class AskanFilter {
             boolean storiesFlag = root.optBoolean("show_stories", true);
             int megagroupSize = root.optInt("max_megagroup_size", 250);
             boolean filterEnabled = root.optBoolean("content_filter_enabled", false);
+            JSONObject filterObj = root.optJSONObject("filter");
+            String filterJson = filterObj != null ? filterObj.toString() : "";
 
             Set<String> newGlobal = new HashSet<>();
             JSONArray allowedArr = root.optJSONArray("allowed_chats");
@@ -847,6 +856,7 @@ public class AskanFilter {
                 showStories = storiesFlag;
                 maxMegagroupSize = megagroupSize;
                 contentFilterEnabled = filterEnabled;
+                applyFilterJson(filterJson);
                 globalAllow.clear(); globalAllow.addAll(newGlobal);
                 userAllow.clear();   userAllow.addAll(newUser);
                 blockedWords.clear(); blockedWords.addAll(newBlocked);
@@ -864,6 +874,7 @@ public class AskanFilter {
                     .putBoolean("show_stories", storiesFlag)
                     .putInt("max_megagroup_size", megagroupSize)
                     .putBoolean("content_filter_enabled", filterEnabled)
+                    .putString("filter_json", filterJson)
                     .putStringSet("global_allow", newGlobal)
                     .putStringSet("user_allow", newUser)
                     .putStringSet("blocked_words", newBlocked)
@@ -903,6 +914,7 @@ public class AskanFilter {
                 showStories = prefs.getBoolean("show_stories", true);
                 maxMegagroupSize = prefs.getInt("max_megagroup_size", 250);
                 contentFilterEnabled = prefs.getBoolean("content_filter_enabled", false);
+                applyFilterJson(prefs.getString("filter_json", ""));
 
                 // Normalize on load so case-insensitive matching holds even for
                 // pre-fix cached data (before the first fresh fetchPermissions).
@@ -1104,6 +1116,242 @@ public class AskanFilter {
     public synchronized boolean isContentFilterEnabled() { return contentFilterEnabled; }
     public synchronized boolean isSearchBlocked() { return !blockedWords.isEmpty(); }
     public synchronized int getMaxMegagroupSize() { return maxMegagroupSize; }
+
+    // ─── Filter levels ───────────────────────────────────────────────────────
+
+    /** Caller holds the lock. Empty/invalid JSON = today's behaviour (basic). */
+    private void applyFilterJson(String json) {
+        filterOptions.clear();
+        filterOptions.putAll(AskanFilterLevels.BASIC);
+        filterLocks.clear();
+        filterLevel = "basic";
+        if (json == null || json.isEmpty()) return;
+        try {
+            JSONObject f = new JSONObject(json);
+            filterLevel = f.optString("level", "basic");
+            JSONObject o = f.optJSONObject("options");
+            if (o != null) {
+                for (String k : AskanFilterLevels.OPTIONS.keySet()) {
+                    String v = o.optString(k, null);
+                    if (AskanFilterLevels.isValid(k, v)) filterOptions.put(k, v);
+                }
+            }
+            JSONObject l = f.optJSONObject("locks");
+            if (l != null) {
+                java.util.Iterator<String> it = l.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    JSONObject g = l.optJSONObject(k);
+                    if (g != null) filterLocks.put(k, new String[]{ g.optString("state", "ok"), g.optString("until", "") });
+                }
+            }
+        } catch (Exception e) {
+            FileLog.e("AskanFilter: bad filter json", e);
+        }
+    }
+
+    public synchronized String getFilterOption(String option) {
+        String v = filterOptions.get(option);
+        return v != null ? v : AskanFilterLevels.BASIC.get(option);
+    }
+
+    public synchronized String getFilterLevel() { return filterLevel; }
+
+    public static final String HIDDEN_MEDIA_TEXT = "🚫 מדיה מוסתרת לפי הגדרות הסינון";
+
+    /**
+     * Filter levels: should this message's media be hidden? Covers photos, videos,
+     * round videos and GIFs (stickers, voice, files and polls are untouched). The
+     * user's own outgoing media is never hidden.
+     */
+    public boolean shouldHideMedia(int account, TLRPC.Message m) {
+        if (m == null || m.action != null || m.out || m.media == null) return false;
+        boolean photo = m.media instanceof TLRPC.TL_messageMediaPhoto && m.media.photo != null;
+        boolean video = false;
+        if (!photo) {
+            TLRPC.Document d = m.media.document;
+            if (!(m.media instanceof TLRPC.TL_messageMediaDocument) || d == null) return false;
+            if (MessageObject.isStickerDocument(d) || MessageObject.isAnimatedStickerDocument(d, true)) return false;
+            String mime = d.mime_type != null ? d.mime_type : "";
+            if (MessageObject.isVideoDocument(d) || MessageObject.isRoundVideoDocument(d)
+                    || MessageObject.isGifDocument(d) || mime.startsWith("video/")) {
+                video = true;
+            } else if (mime.startsWith("image/")) {
+                photo = true;
+            } else {
+                return false;
+            }
+        }
+        String forwarded, privateMedia, groupMedia, videos;
+        synchronized (this) {
+            forwarded    = filterOptions.get(AskanFilterLevels.FORWARDED_MEDIA);
+            privateMedia = filterOptions.get(AskanFilterLevels.PRIVATE_MEDIA);
+            groupMedia   = filterOptions.get(AskanFilterLevels.GROUP_MEDIA);
+            videos       = filterOptions.get(AskanFilterLevels.VIDEOS);
+        }
+        if (video && "hide".equals(videos)) return true;
+
+        // forwarded from a channel that is not on the user's allow lists
+        if ("hide".equals(forwarded) && m.fwd_from != null && m.fwd_from.from_id instanceof TLRPC.TL_peerChannel) {
+            String cid = String.valueOf(m.fwd_from.from_id.channel_id);
+            synchronized (this) {
+                if (!globalAllow.contains(cid) && !userAllow.contains(cid)) return true;
+            }
+        }
+
+        if (m.peer_id instanceof TLRPC.TL_peerUser) {
+            if (privateMedia == null || "all".equals(privateMedia)) return false;
+            if ("none".equals(privateMedia)) return true;
+            boolean needContact = privateMedia.contains("contacts");
+            boolean photosOnly = privateMedia.contains("photos");
+            if (photosOnly && !photo) return true;
+            if (needContact) {
+                long fromId = m.from_id != null ? m.from_id.user_id : m.peer_id.user_id;
+                TLRPC.User u = MessagesController.getInstance(account).getUser(fromId);
+                if (u == null || !u.contact) return true;
+            }
+            return false;
+        }
+        if (m.peer_id instanceof TLRPC.TL_peerChat
+                || (m.peer_id instanceof TLRPC.TL_peerChannel && isGroupPeer(account, m.peer_id.channel_id))) {
+            if (groupMedia == null || "all".equals(groupMedia)) return false;
+            if ("none".equals(groupMedia)) return true;
+            return "photos".equals(groupMedia) && !photo;
+        }
+        return false;
+    }
+
+    private static boolean isGroupPeer(int account, long channelId) {
+        TLRPC.Chat c = MessagesController.getInstance(account).getChat(channelId);
+        return c != null && ChatObject.isMegagroup(c);
+    }
+
+    /**
+     * A display copy of the message with the media removed and a note appended.
+     * The original object is left untouched, so nothing hidden is ever written
+     * back to the local database and loosening the level brings the media back.
+     */
+    public static TLRPC.Message copyWithoutMedia(TLRPC.Message m) {
+        try {
+            TLRPC.Message c = m.getClass().newInstance();
+            for (Class<?> k = m.getClass(); k != null && k != Object.class; k = k.getSuperclass()) {
+                for (java.lang.reflect.Field f : k.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                    f.setAccessible(true);
+                    f.set(c, f.get(m));
+                }
+            }
+            c.media = new TLRPC.TL_messageMediaEmpty();
+            String caption = m.message != null ? m.message : "";
+            c.message = caption.isEmpty() ? HIDDEN_MEDIA_TEXT : caption + "\n\n" + HIDDEN_MEDIA_TEXT;
+            return c;
+        } catch (Throwable e) {
+            FileLog.e("AskanFilter: copyWithoutMedia failed", e);
+            return null;
+        }
+    }
+
+    /** Filter level: small (basic) groups also need approval. Caller may or may not hold the lock. */
+    private synchronized boolean basicGroupsNeedRequest() {
+        return "request".equals(filterOptions.get(AskanFilterLevels.BASIC_GROUPS));
+    }
+
+    /** {state, until} — state is "ok", "cooldown" or "admin_only". */
+    public synchronized String[] getFilterLock(String option) {
+        String[] l = filterLocks.get(option);
+        return l != null ? l : new String[]{ "ok", "" };
+    }
+
+    public interface FilterRequestCallback { void onResult(String status, String until); }
+
+    /** The customer makes an option stricter for themselves (immediate). */
+    public void sendFilterTighten(String phone, long telegramId, String option, String value,
+                                  Runnable onSuccess, Runnable onError) {
+        new Thread(() -> {
+            try {
+                String token = acquireToken(phone, telegramId);
+                if (token == null) { AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); }); return; }
+                JSONObject body = new JSONObject();
+                body.put("option", option);
+                body.put("value", value);
+                HttpResult r = postJson(SERVER_URL + "/api/filter/tighten", body, token);
+                if (r.code == 401) {
+                    clearToken(phone);
+                    token = issueNewToken(phone, telegramId);
+                    r = token != null ? postJson(SERVER_URL + "/api/filter/tighten", body, token) : new HttpResult(401, "");
+                }
+                if (r.code == 200) {
+                    final String state = r.body;
+                    synchronized (this) {
+                        applyFilterJson(state);
+                        if (AskanFilterLevels.STORIES.equals(option)) showStories = false;
+                        if (AskanFilterLevels.PROFILE_PHOTOS.equals(option)) showProfilePhotos = false;
+                    }
+                    ApplicationLoader.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                            .edit().putString("filter_json", state).apply();
+                    AndroidUtilities.runOnUIThread(() -> {
+                        if (onSuccess != null) onSuccess.run();
+                        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                            if (UserConfig.getInstance(a).isClientActivated()) {
+                                NotificationCenter.getInstance(a).postNotificationName(NotificationCenter.dialogsNeedReload);
+                            }
+                        }
+                    });
+                } else {
+                    AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
+                }
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: sendFilterTighten failed", e);
+                AndroidUtilities.runOnUIThread(() -> { if (onError != null) onError.run(); });
+            }
+        }).start();
+    }
+
+    /**
+     * Ask an admin to loosen an option. status: pending | already_pending | already_open |
+     * cooldown (until = ISO date) | admin_only | error.
+     */
+    public void sendFilterRequest(String phone, long telegramId, String option, String value,
+                                  FilterRequestCallback callback) {
+        new Thread(() -> {
+            String status = "error", until = "";
+            try {
+                String token = acquireToken(phone, telegramId);
+                if (token != null) {
+                    JSONObject body = new JSONObject();
+                    body.put("option", option);
+                    body.put("value", value);
+                    HttpResult r = postJson(SERVER_URL + "/api/filter/request", body, token);
+                    if (r.code == 401) {
+                        clearToken(phone);
+                        token = issueNewToken(phone, telegramId);
+                        r = token != null ? postJson(SERVER_URL + "/api/filter/request", body, token) : new HttpResult(401, "");
+                    }
+                    if (r.code == 200) {
+                        JSONObject o = new JSONObject(r.body);
+                        status = o.optString("status", "error");
+                        until = o.optString("until", "");
+                    }
+                }
+            } catch (Exception e) {
+                FileLog.e("AskanFilter: sendFilterRequest failed", e);
+            }
+            final String fs = status, fu = until;
+            AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(fs, fu); });
+        }).start();
+    }
+
+    /** "15.11" from an ISO timestamp, for "you can ask from …" messages. */
+    public static String shortDate(String iso) {
+        try {
+            java.text.SimpleDateFormat in = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US);
+            in.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            java.util.Date d = in.parse(iso.length() >= 19 ? iso.substring(0, 19) : iso);
+            return new java.text.SimpleDateFormat("d.M", java.util.Locale.US).format(d);
+        } catch (Exception e) {
+            return "";
+        }
+    }
 
     /**
      * Returns true if text contains a blocked word at a word boundary.
@@ -1661,9 +1909,12 @@ public class AskanFilter {
         if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
             return true;
 
-        // Rule 1: basic groups — not filtered by Askan (explicit block above is the only check)
+        // Rule 1: basic groups — not filtered by Askan (explicit block above is the only check),
+        // unless the filter level says small groups also need a request.
         if (!ChatObject.isMegagroup(chat) && !ChatObject.isChannelAndNotMegaGroup(chat)) {
-            return false;
+            if (!basicGroupsNeedRequest()) return false;
+            return !(globalAllow.contains(idStr) || userAllow.contains(idStr)
+                    || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname))));
         }
 
         // Rule 2: megagroup
@@ -1810,8 +2061,12 @@ public class AskanFilter {
         if (blockedChats.contains(idStr) || (uname != null && blockedChats.contains(uname)))
             return BlockReason.EXPLICIT;
         // basic groups are not filtered (only an explicit block, handled above)
-        if (!ChatObject.isMegagroup(chat) && !ChatObject.isChannelAndNotMegaGroup(chat))
-            return BlockReason.NOT_BLOCKED;
+        if (!ChatObject.isMegagroup(chat) && !ChatObject.isChannelAndNotMegaGroup(chat)) {
+            if (!basicGroupsNeedRequest()) return BlockReason.NOT_BLOCKED;
+            boolean basicAllowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
+                    || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
+            return basicAllowed ? BlockReason.NOT_BLOCKED : BlockReason.NOT_APPROVED;
+        }
         boolean allowed = globalAllow.contains(idStr) || userAllow.contains(idStr)
                 || (uname != null && (globalAllow.contains(uname) || userAllow.contains(uname)));
         if (!allowed && ChatObject.isMegagroup(chat) && chatFull != null && chatFull.linked_chat_id != 0) {

@@ -1923,6 +1923,15 @@ public class MessageObject {
         this.searchType = searchType;
 
         currentAccount = accountNum;
+        // Askan filter levels: media the level hides is shown from a copy without it,
+        // so the stored message keeps its media (see AskanFilter.copyWithoutMedia).
+        if (!isRepostPreview && org.telegram.messenger.askan.AskanFilter.getInstance().shouldHideMedia(accountNum, message)) {
+            TLRPC.Message hidden = org.telegram.messenger.askan.AskanFilter.copyWithoutMedia(message);
+            if (hidden != null) {
+                message = hidden;
+                askanMediaHidden = true;
+            }
+        }
         messageOwner = message;
         replyMessageObject = replyToMessage;
         eventId = eid;
@@ -6663,6 +6672,9 @@ public class MessageObject {
                 return true;
         return false;
     }
+
+    /** Askan: this object shows a copy of the message with its media hidden by the filter level. */
+    public boolean askanMediaHidden;
 
     public void setType() {
         int oldType = type;

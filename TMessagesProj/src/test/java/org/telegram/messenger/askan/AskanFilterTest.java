@@ -357,4 +357,74 @@ public class AskanFilterTest {
         assertFalse(filter.consumeAppWebViewApproval(req1)); // single use
         assertFalse(filter.consumeAppWebViewApproval(req2));
     }
+
+    // ── filter levels ─────────────────────────────────────────────────────────
+    @SuppressWarnings("unchecked")
+    private void setOption(String option, String value) throws Exception {
+        Field f = AskanFilter.class.getDeclaredField("filterOptions");
+        f.setAccessible(true);
+        ((java.util.Map<String, String>) f.get(filter)).put(option, value);
+    }
+
+    private static TLRPC.Message photoMessage(TLRPC.Peer peer) {
+        TLRPC.TL_message m = new TLRPC.TL_message();
+        m.peer_id = peer;
+        m.message = "caption";
+        TLRPC.TL_messageMediaPhoto media = new TLRPC.TL_messageMediaPhoto();
+        media.photo = new TLRPC.TL_photo();
+        m.media = media;
+        return m;
+    }
+
+    private static TLRPC.Peer userPeer(long id) { TLRPC.TL_peerUser p = new TLRPC.TL_peerUser(); p.user_id = id; return p; }
+
+    @Test
+    public void filterLevels_basicHidesNothing() {
+        assertFalse(filter.shouldHideMedia(0, photoMessage(userPeer(5))));
+    }
+
+    @Test
+    public void filterLevels_privateNoneHidesIncomingNotOwn() throws Exception {
+        setOption(AskanFilterLevels.PRIVATE_MEDIA, "none");
+        TLRPC.Message in = photoMessage(userPeer(5));
+        assertTrue(filter.shouldHideMedia(0, in));
+        TLRPC.Message own = photoMessage(userPeer(5));
+        own.out = true;
+        assertFalse(filter.shouldHideMedia(0, own));
+    }
+
+    @Test
+    public void filterLevels_forwardedFromUnapprovedChannelHidden() throws Exception {
+        setOption(AskanFilterLevels.FORWARDED_MEDIA, "hide");
+        TLRPC.Message m = photoMessage(userPeer(5));
+        m.fwd_from = new TLRPC.TL_messageFwdHeader();
+        TLRPC.TL_peerChannel ch = new TLRPC.TL_peerChannel();
+        ch.channel_id = 777;
+        m.fwd_from.from_id = ch;
+        assertTrue(filter.shouldHideMedia(0, m));
+        seed("userAllow", "777");
+        assertFalse(filter.shouldHideMedia(0, m));
+    }
+
+    @Test
+    public void filterLevels_copyWithoutMediaLeavesOriginal() {
+        TLRPC.Message m = photoMessage(userPeer(5));
+        m.dialog_id = 5;
+        TLRPC.Message c = AskanFilter.copyWithoutMedia(m);
+        assertTrue(c.media instanceof TLRPC.TL_messageMediaEmpty);
+        assertTrue(c.message.startsWith("caption"));
+        assertTrue(c.message.endsWith(AskanFilter.HIDDEN_MEDIA_TEXT));
+        assertEquals(5, c.dialog_id);
+        assertTrue(m.media instanceof TLRPC.TL_messageMediaPhoto);
+        assertEquals("caption", m.message);
+    }
+
+    @Test
+    public void filterLevels_strictnessIsPartialOrder() {
+        assertTrue(AskanFilterLevels.isStricter("private_media", "contacts_photos", "photos"));
+        assertFalse(AskanFilterLevels.isStricter("private_media", "contacts", "photos"));
+        assertFalse(AskanFilterLevels.isStricter("private_media", "photos", "contacts"));
+        assertTrue(AskanFilterLevels.isStricter("videos", "hide", "show"));
+        assertFalse(AskanFilterLevels.isStricter("videos", "show", "show"));
+    }
 }

@@ -428,6 +428,16 @@ public class ConnectionsManager extends BaseController {
         //
         // Same rule as inline bots: only an explicitly allowed bot may open one.
         // Blocking the request leaves the sheet empty instead of loading a page.
+        // Filter level "mini apps: blocked" — no web view of any bot, approved or not.
+        if ((object instanceof TLRPC.TL_messages_requestWebView
+                || object instanceof TLRPC.TL_messages_requestSimpleWebView
+                || object instanceof TLRPC.TL_messages_requestMainWebView
+                || object instanceof TLRPC.TL_messages_requestAppWebView)
+                && "block".equals(org.telegram.messenger.askan.AskanFilter.getInstance()
+                        .getFilterOption(org.telegram.messenger.askan.AskanFilterLevels.MINI_APPS))) {
+            if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: mini apps blocked by filter level");
+            return;
+        }
         if (object instanceof TLRPC.TL_messages_requestWebView) {
             if (!org.telegram.messenger.askan.AskanFilter.getInstance().isInlineBotAllowed(((TLRPC.TL_messages_requestWebView) object).bot)) {
                 if (BuildVars.LOGS_ENABLED) FileLog.d("Askan: blocked bot web view request");

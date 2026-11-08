@@ -52,6 +52,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
     private static final int TYPE_PRIVACY_TOGGLE = 2;
     private static final int TYPE_BLOCKED_CHAT   = 3;
     private static final int TYPE_ACTION         = 4;
+    private static final int TYPE_FILTER_OPTION  = 5;
 
     private static final int ACTION_COPY_STATUS  = 1;
     private static final int ACTION_SHARE_REPORT = 2;
@@ -70,6 +71,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         boolean retrySent;
         boolean isProfilePhotos;
         boolean toggleValue;
+        String filterOption;
         TLRPC.Chat chat;
         TLRPC.User user;
         boolean requestSent;
@@ -91,6 +93,9 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         static ListItem privacy(boolean isPhotos, boolean value) {
             ListItem i = new ListItem(TYPE_PRIVACY_TOGGLE);
             i.isProfilePhotos = isPhotos; i.toggleValue = value; return i;
+        }
+        static ListItem filter(String option) {
+            ListItem i = new ListItem(TYPE_FILTER_OPTION); i.filterOption = option; return i;
         }
         static ListItem blockedChat(TLRPC.Chat c) {
             ListItem i = new ListItem(TYPE_BLOCKED_CHAT); i.chat = c; return i;
@@ -346,9 +351,10 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                         "queued", q.optString("kind"), q.optString("privacy_target")));
             }
         }
-        items.add(ListItem.header("פרטיות"));
-        items.add(ListItem.privacy(true,  AskanFilter.getInstance().shouldShowProfilePhotos()));
-        items.add(ListItem.privacy(false, AskanFilter.getInstance().shouldShowStories()));
+        items.add(ListItem.header("הגדרות הסינון שלי"));
+        for (String opt : org.telegram.messenger.askan.AskanFilterLevels.OPTIONS.keySet()) {
+            items.add(ListItem.filter(opt));
+        }
         items.add(ListItem.header("תמיכה"));
         TLRPC.User meForId = UserConfig.getInstance(currentAccount).getCurrentUser();
         if (meForId != null && AskanFilter.getInstance().hasIdentityMismatch(meForId.phone)) {
@@ -506,6 +512,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 case TYPE_SECTION_HEADER: cell = new SectionHeaderCell(ctx); break;
                 case TYPE_REQUEST:        cell = new RequestCell(ctx);        break;
                 case TYPE_PRIVACY_TOGGLE: cell = new PrivacyToggleCell(ctx);  break;
+                case TYPE_FILTER_OPTION:  cell = new FilterOptionCell(ctx);   break;
                 case TYPE_ACTION:         cell = new ActionCell(ctx);         break;
                 default:                  cell = new BlockedChatCell(ctx);    break;
             }
@@ -523,6 +530,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                 case TYPE_SECTION_HEADER: ((SectionHeaderCell) holder.itemView).bind(item.headerTitle); break;
                 case TYPE_REQUEST:        ((RequestCell) holder.itemView).bind(item, position); break;
                 case TYPE_PRIVACY_TOGGLE: ((PrivacyToggleCell) holder.itemView).bind(item, position); break;
+                case TYPE_FILTER_OPTION:  ((FilterOptionCell) holder.itemView).bind(item, position); break;
                 case TYPE_ACTION:         ((ActionCell) holder.itemView).bind(item, position); break;
                 case TYPE_BLOCKED_CHAT:
                     boolean nextIsChat = (position + 1 < items.size())
@@ -653,10 +661,10 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         }
 
         void bind(ListItem item, int position) {
-            boolean isPrivacy = "privacy".equals(item.kind);
+            boolean isPrivacy = "privacy".equals(item.kind) || "filter".equals(item.kind);
             String name;
             if (isPrivacy) {
-                name = "profile_photos".equals(item.privacyTarget) ? "תמונות פרופיל" : "סטוריז";
+                name = org.telegram.messenger.askan.AskanFilterLevels.optionLabel(item.privacyTarget);
             } else {
                 name = (item.chatName != null && !item.chatName.isEmpty()) ? item.chatName : item.chatUsername;
             }
@@ -735,11 +743,19 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                             retryButton.setEnabled(false);
                             TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
                             if (me == null) return;
-                            AskanFilter.getInstance().sendPrivacyRestoreRequest(me.phone,
+                            String loosest = org.telegram.messenger.askan.AskanFilterLevels.BASIC.get(item.privacyTarget);
+                            AskanFilter.getInstance().sendFilterRequest(me.phone,
                                     UserConfig.getInstance(currentAccount).getClientUserId(),
-                                    item.privacyTarget,
-                                    () -> { markDoneLater(item); if (adapter != null) adapter.notifyItemChanged(position); },
-                                    () -> { item.retrySent = false; if (adapter != null) adapter.notifyItemChanged(position); });
+                                    item.privacyTarget, loosest != null ? loosest : "show",
+                                    (st, until) -> {
+                                        if ("pending".equals(st) || "already_pending".equals(st)) {
+                                            markDoneLater(item);
+                                        } else {
+                                            item.retrySent = false;
+                                            showFilterRequestResult(st, until);
+                                        }
+                                        if (adapter != null) adapter.notifyItemChanged(position);
+                                    });
                         } else {
                             Context parentCtx = getParentActivity();
                             if (parentCtx == null) return;
@@ -762,6 +778,169 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         @Override
         protected void onMeasure(int w, int h) {
             super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(64), MeasureSpec.EXACTLY));
+        }
+    }
+
+    // ── Filter levels ─────────────────────────────────────────────────────────
+
+    private boolean hasPendingFilterRequest(String option) {
+        for (AskanFilter.RequestInfo r : myRequests) {
+            if (("privacy".equals(r.kind) || "filter".equals(r.kind))
+                    && option.equals(r.privacyTarget) && "pending".equals(r.status)) return true;
+        }
+        return false;
+    }
+
+    /** Explains a request that was not sent (cooldown / admin only / error). */
+    private void showFilterRequestResult(String status, String until) {
+        Context ctx = getParentActivity();
+        if (ctx == null) return;
+        String msg;
+        if ("cooldown".equals(status)) {
+            String d = AskanFilter.shortDate(until);
+            msg = "הסתרת את זה לאחרונה. אפשר יהיה לבקש פתיחה" + (d.isEmpty() ? " בעוד כמה ימים." : " החל מ-" + d + ".");
+        } else if ("admin_only".equals(status)) {
+            msg = "ההגדרה הזו נפתחה ונסגרה כמה פעמים לאחרונה. מעכשיו רק מנהל יכול לפתוח אותה — פנה לתמיכה.";
+        } else if ("already_open".equals(status)) {
+            msg = "ההגדרה כבר פתוחה.";
+        } else {
+            msg = "שגיאה בשליחת הבקשה. נסה שוב.";
+        }
+        new AlertDialog.Builder(ctx).setMessage(msg).setPositiveButton("סגור", null).show();
+    }
+
+    private void afterFilterChange() {
+        buildItems();
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    private void tightenFilter(String option, String value) {
+        Context ctx = getParentActivity();
+        if (ctx == null) return;
+        new AlertDialog.Builder(ctx)
+                .setTitle("החמרה")
+                .setMessage(org.telegram.messenger.askan.AskanFilterLevels.optionLabel(option) + ": "
+                        + org.telegram.messenger.askan.AskanFilterLevels.valueLabel(value)
+                        + "\n\nאחרי ההחמרה אפשר לחזור רק באישור מנהל, ורק אחרי תקופת המתנה. להמשיך?")
+                .setPositiveButton("המשך", (d, w) -> {
+                    TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
+                    if (me == null) return;
+                    AskanFilter.getInstance().sendFilterTighten(me.phone,
+                            UserConfig.getInstance(currentAccount).getClientUserId(), option, value,
+                            this::afterFilterChange,
+                            () -> {
+                                Context c2 = getParentActivity();
+                                if (c2 != null) new AlertDialog.Builder(c2).setMessage("שגיאה בעדכון ההגדרה. נסה שוב.").setPositiveButton("סגור", null).show();
+                            });
+                })
+                .setNegativeButton("ביטול", null).show();
+    }
+
+    private void requestLoosen(String option, String value) {
+        TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
+        if (me == null) return;
+        AskanFilter.getInstance().sendFilterRequest(me.phone,
+                UserConfig.getInstance(currentAccount).getClientUserId(), option, value,
+                (status, until) -> {
+                    if ("pending".equals(status) || "already_pending".equals(status)) {
+                        List<AskanFilter.RequestInfo> updated = new ArrayList<>(myRequests);
+                        updated.add(new AskanFilter.RequestInfo(0, "", "", "pending", "filter", option));
+                        myRequests = updated;
+                        afterFilterChange();
+                        Context ctx = getParentActivity();
+                        if (ctx != null) new AlertDialog.Builder(ctx).setMessage("הבקשה נשלחה למנהל.").setPositiveButton("סגור", null).show();
+                    } else {
+                        showFilterRequestResult(status, until);
+                    }
+                });
+    }
+
+    /** Lists every value: stricter ones apply at once, looser ones send a request. */
+    private void showFilterChooser(String option) {
+        Context ctx = getParentActivity();
+        if (ctx == null) return;
+        String current = AskanFilter.getInstance().getFilterOption(option);
+        List<String> values = new ArrayList<>(org.telegram.messenger.askan.AskanFilterLevels.OPTIONS.get(option).keySet());
+        List<String> shown = new ArrayList<>();
+        List<CharSequence> labels = new ArrayList<>();
+        for (String v : values) {
+            if (v.equals(current)) continue;
+            boolean stricter = org.telegram.messenger.askan.AskanFilterLevels.isStricter(option, v, current);
+            boolean looser = org.telegram.messenger.askan.AskanFilterLevels.isStricter(option, current, v);
+            if (!stricter && !looser) continue; // sideways (e.g. contacts ↔ photos): not offered
+            shown.add(v);
+            labels.add(org.telegram.messenger.askan.AskanFilterLevels.valueLabel(v) + (stricter ? "  (מיידי)" : "  (בקשה למנהל)"));
+        }
+        if (shown.isEmpty()) return;
+        new AlertDialog.Builder(ctx)
+                .setTitle(org.telegram.messenger.askan.AskanFilterLevels.optionLabel(option))
+                .setItems(labels.toArray(new CharSequence[0]), (d, which) -> {
+                    String v = shown.get(which);
+                    if (org.telegram.messenger.askan.AskanFilterLevels.isStricter(option, v, current)) tightenFilter(option, v);
+                    else requestLoosen(option, v);
+                })
+                .setNegativeButton("ביטול", null).show();
+    }
+
+    private class FilterOptionCell extends FrameLayout {
+        private final TextView labelView;
+        private final TextView hintView;
+        private final TextView actionButton;
+        private final View divider;
+
+        FilterOptionCell(Context ctx) {
+            super(ctx);
+            setBackground(cardBg(ctx));
+            labelView = new TextView(ctx);
+            labelView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+            labelView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            labelView.setTypeface(Typeface.DEFAULT_BOLD);
+            addView(labelView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
+                    Gravity.START | Gravity.TOP, 16, 12, 120, 0));
+            hintView = new TextView(ctx);
+            hintView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            addView(hintView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
+                    Gravity.START | Gravity.BOTTOM, 16, 0, 120, 12));
+            actionButton = makeOutlineBtn(ctx, "שינוי");
+            addView(actionButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
+                    Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 14, 0));
+            divider = new View(ctx);
+            divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
+            addView(divider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 0.5f,
+                    Gravity.BOTTOM | Gravity.START, 16, 0, 0, 0));
+        }
+
+        void bind(ListItem item, int position) {
+            String option = item.filterOption;
+            String value = AskanFilter.getInstance().getFilterOption(option);
+            boolean restricted = org.telegram.messenger.askan.AskanFilterLevels.restricts(option, value);
+            labelView.setText(org.telegram.messenger.askan.AskanFilterLevels.optionLabel(option));
+            String hint = org.telegram.messenger.askan.AskanFilterLevels.valueLabel(value);
+            int color = Theme.getColor(restricted ? Theme.key_color_orange : Theme.key_color_green);
+            boolean pending = hasPendingFilterRequest(option);
+            if (pending) {
+                hint += " · ממתין לאישור ⏳";
+            } else if (restricted) {
+                String[] lock = AskanFilter.getInstance().getFilterLock(option);
+                if ("cooldown".equals(lock[0])) {
+                    String d = AskanFilter.shortDate(lock[1]);
+                    if (!d.isEmpty()) hint += " · בקשה אפשרית מ-" + d;
+                } else if ("admin_only".equals(lock[0])) {
+                    hint += " · רק מנהל יכול לפתוח";
+                }
+            }
+            hintView.setText(hint);
+            hintView.setTextColor(color);
+            actionButton.setVisibility(pending ? View.GONE : View.VISIBLE);
+            actionButton.setOnClickListener(v -> showFilterChooser(option));
+            boolean nextIsFilter = (position + 1 < items.size())
+                    && items.get(position + 1).viewType == TYPE_FILTER_OPTION;
+            divider.setVisibility(nextIsFilter ? View.VISIBLE : View.GONE);
+        }
+
+        @Override
+        protected void onMeasure(int w, int h) {
+            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(60), MeasureSpec.EXACTLY));
         }
     }
 

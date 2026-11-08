@@ -4111,6 +4111,22 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
                 @Override
                 public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                     d("shouldInterceptRequest " + (request == null ? null : request.getUrl()));
+                    // Askan filter level "foreign sites inside a mini app: blocked" — an
+                    // embedded page (iframe) from another site gets an empty document.
+                    // Same allowance as navigation (isMiniAppNavigationAllowed: maps, payments).
+                    if (bot && request != null && !request.isForMainFrame() && request.getUrl() != null
+                            && askanHomeDomain != null && request.getRequestHeaders() != null
+                            && "block".equals(org.telegram.messenger.askan.AskanFilter.getInstance()
+                                    .getFilterOption(org.telegram.messenger.askan.AskanFilterLevels.FOREIGN_IFRAMES))) {
+                        String accept = request.getRequestHeaders().get("Accept");
+                        String host = request.getUrl().getHost();
+                        if (accept != null && accept.contains("text/html") && host != null
+                                && !org.telegram.messenger.askan.AskanFilter.getInstance().isMiniAppNavigationAllowed(askanHomeDomain, host)) {
+                            d("askan: blocked foreign frame " + host);
+                            return new WebResourceResponse("text/html", "utf-8",
+                                    new java.io.ByteArrayInputStream(new byte[0]));
+                        }
+                    }
                     if (request != null && isTonsite(request.getUrl())) {
                         d("proxying ton");
                         firstRequest = false;
