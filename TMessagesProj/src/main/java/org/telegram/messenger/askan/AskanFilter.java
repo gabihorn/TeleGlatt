@@ -1429,6 +1429,13 @@ public class AskanFilter {
 
     // ─── My requests ─────────────────────────────────────────────────────────────
 
+    /** Customer-facing text for a rejection reason (null when there is none). */
+    public static String rejectReasonText(String reason) {
+        if (reason == null || reason.trim().isEmpty()) return null;
+        if ("blocked_word".equals(reason)) return "השם או התיאור כוללים מילה שאסורה בסינון, ולכן הבקשה נדחתה אוטומטית.";
+        return reason.trim();
+    }
+
     public static class RequestInfo {
         public final int id;
         public final String chatUsername;
@@ -1436,6 +1443,8 @@ public class AskanFilter {
         public final String status;
         public final String kind;
         public final String privacyTarget;
+        /** Why it was turned down: admin's free text, "blocked_word", or null. */
+        public String rejectReason;
 
         public RequestInfo(int id, String chatUsername, String chatName, String status,
                            String kind, String privacyTarget) {
@@ -1490,13 +1499,15 @@ public class AskanFilter {
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject obj = arr.getJSONObject(i);
                     String privTarget = obj.isNull("privacy_target") ? null : obj.optString("privacy_target", null);
-                    list.add(new RequestInfo(
+                    RequestInfo ri = new RequestInfo(
                             obj.optInt("id", 0),
                             obj.optString("chat_username", ""),
                             obj.optString("chat_name", ""),
                             obj.optString("status", ""),
                             obj.optString("kind", "access"),
-                            privTarget));
+                            privTarget);
+                    ri.rejectReason = obj.isNull("reject_reason") ? null : obj.optString("reject_reason", null);
+                    list.add(ri);
                 }
                 AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(list); });
 

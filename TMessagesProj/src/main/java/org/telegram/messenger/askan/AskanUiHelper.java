@@ -188,7 +188,12 @@ public class AskanUiHelper {
         View iconSpacer = new View(ctx);
         infoBox.addView(iconSpacer, new LinearLayout.LayoutParams(dp(8), 1));
         TextView infoText = new TextView(ctx);
-        infoText.setText("ניתן להגיש בקשת גישה. הבקשה תיבדק על ידי הצוות ותטופל בהקדם.");
+        // Explicitly blocked (by the team, for everyone / the company / this user): the
+        // server answers any request with "blocked", so don't offer one.
+        final boolean explicitlyBlocked = reason == AskanFilter.BlockReason.EXPLICIT;
+        infoText.setText(explicitlyBlocked
+                ? "צוות הסינון בדק וחסם את זה, ולכן אי אפשר לבקש גישה."
+                : "ניתן להגיש בקשת גישה. הבקשה תיבדק על ידי הצוות ותטופל בהקדם.");
         infoText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         infoText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
         infoText.setLineSpacing(dp(2), 1f);
@@ -219,7 +224,7 @@ public class AskanUiHelper {
         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         btnLp.topMargin = dp(16);
-        content.addView(requestBtn, btnLp);
+        if (!explicitlyBlocked) content.addView(requestBtn, btnLp);
 
         // Close link
         TextView closeBtn = new TextView(ctx);

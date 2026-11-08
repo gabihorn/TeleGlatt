@@ -68,6 +68,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         String chatUsername, chatName, requestStatus;
         String kind;
         String privacyTarget;
+        String rejectReason;
         boolean retrySent;
         boolean isProfilePhotos;
         boolean toggleValue;
@@ -333,12 +334,14 @@ public class AskanBlockedChatsActivity extends BaseFragment {
             if (!pending.isEmpty()) {
                 items.add(ListItem.header("בקשות"));
                 for (AskanFilter.RequestInfo r : pending)
-                    items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget));
+                    { ListItem li = ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget);
+                      li.rejectReason = r.rejectReason; items.add(li); }
             }
             if (!decided.isEmpty()) {
                 items.add(ListItem.header("תשובות אחרונות"));
                 for (AskanFilter.RequestInfo r : decided)
-                    items.add(ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget));
+                    { ListItem li = ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget);
+                      li.rejectReason = r.rejectReason; items.add(li); }
             }
         }
         // Requests saved on the device while the server was unreachable.
@@ -661,6 +664,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         }
 
         void bind(ListItem item, int position) {
+            statusView.setOnClickListener(null); // recycled rows: only a rejected row with a reason is tappable
             boolean isPrivacy = "privacy".equals(item.kind) || "filter".equals(item.kind);
             String name;
             if (isPrivacy) {
@@ -722,9 +726,18 @@ public class AskanBlockedChatsActivity extends BaseFragment {
                     if (!isPrivacy) openApproved(item.chatUsername);
                 });
             } else {
-                statusView.setText("לא אושרה");
+                final String why = AskanFilter.rejectReasonText(item.rejectReason);
+                statusView.setText(why != null ? "לא אושרה · למה?" : "לא אושרה");
                 statusView.setTextColor(Theme.getColor(Theme.key_text_RedBold));
                 statusView.setTypeface(Typeface.DEFAULT_BOLD);
+                if (why != null) {
+                    statusView.setOnClickListener(v -> {
+                        Context c = getParentActivity();
+                        if (c != null) new AlertDialog.Builder(c).setTitle("סיבת הדחייה").setMessage(why).setPositiveButton("הבנתי", null).show();
+                    });
+                } else {
+                    statusView.setOnClickListener(null);
+                }
                 retryButton.setVisibility(View.VISIBLE);
                 if (item.retrySent) {
                     retryButton.setText("נשלח ✓");
