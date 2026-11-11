@@ -524,6 +524,11 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         private final TextView nameView, statusView, button;
         private boolean needDivider;
 
+        // Absolute sides from the app language (as Telegram's own cells do): START/END followed the
+        // device language, and the 112dp kept for the button was narrower than "בקשת גישה".
+        private final boolean RTL = org.telegram.messenger.LocaleController.isRTL;
+        private static final int TEXT_END = 150;
+
         RowCell(Context ctx) {
             super(ctx);
             setWillNotDraw(false);
@@ -531,7 +536,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
 
             avatar = new BackupImageView(ctx);
             avatar.setRoundRadius(dp(23));
-            addView(avatar, LayoutHelper.createFrame(46, 46, Gravity.START | Gravity.CENTER_VERTICAL, 13, 0, 13, 0));
+            addView(avatar, LayoutHelper.createFrame(46, 46, LayoutHelper.getAbsoluteGravityStart() | Gravity.CENTER_VERTICAL, 13, 0, 13, 0));
 
             nameView = new TextView(ctx);
             nameView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
@@ -539,17 +544,17 @@ public class AskanBlockedChatsActivity extends BaseFragment {
             nameView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
             nameView.setSingleLine(true);
             nameView.setEllipsize(TextUtils.TruncateAt.END);
-            nameView.setGravity(Gravity.START);
+            nameView.setGravity(LayoutHelper.getAbsoluteGravityStart());
             addView(nameView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP, 72, 10, 112, 0));
+                    LayoutHelper.getAbsoluteGravityStart() | Gravity.TOP, RTL ? TEXT_END : 72, 10, RTL ? 72 : TEXT_END, 0));
 
             statusView = new TextView(ctx);
             statusView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             statusView.setSingleLine(true);
             statusView.setEllipsize(TextUtils.TruncateAt.END);
-            statusView.setGravity(Gravity.START);
+            statusView.setGravity(LayoutHelper.getAbsoluteGravityStart());
             addView(statusView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP, 72, 33, 112, 0));
+                    LayoutHelper.getAbsoluteGravityStart() | Gravity.TOP, RTL ? TEXT_END : 72, 33, RTL ? 72 : TEXT_END, 0));
 
             button = new TextView(ctx);
             button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
@@ -557,7 +562,7 @@ public class AskanBlockedChatsActivity extends BaseFragment {
             button.setGravity(Gravity.CENTER);
             button.setPadding(dp(14), 0, dp(14), 0);
             addView(button, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 28,
-                    Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 14, 0));
+                    (RTL ? Gravity.LEFT : Gravity.RIGHT) | Gravity.CENTER_VERTICAL, RTL ? 14 : 0, 0, RTL ? 0 : 14, 0));
         }
 
         void bind(Item item) {

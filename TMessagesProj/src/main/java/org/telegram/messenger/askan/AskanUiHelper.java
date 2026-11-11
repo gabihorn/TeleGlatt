@@ -227,9 +227,17 @@ public class AskanUiHelper {
             chipScroll.setHorizontalScrollBarEnabled(false);
             LinearLayout chips = new LinearLayout(ctx);
             chips.setOrientation(LinearLayout.HORIZONTAL);
+            // The app does not support RTL layout direction (supportsRtl=false), so in Hebrew the chips
+            // are added in reverse and pushed right: "לימודים" first on the right.
+            final boolean chipsRtl = org.telegram.messenger.LocaleController.isRTL;
+            if (chipsRtl) {
+                chipScroll.setFillViewport(true);
+                chips.setGravity(Gravity.RIGHT);
+            }
             chips.setPadding(dp(20), 0, dp(20), 0);
             TextView[] chipViews = new TextView[REQUEST_REASONS.length];
-            for (int i = 0; i < REQUEST_REASONS.length; i++) {
+            for (int k = 0; k < REQUEST_REASONS.length; k++) {
+                final int i = chipsRtl ? REQUEST_REASONS.length - 1 - k : k;
                 final String r = REQUEST_REASONS[i];
                 TextView c = new TextView(ctx);
                 c.setText(r);
