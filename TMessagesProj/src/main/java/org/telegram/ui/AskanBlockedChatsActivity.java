@@ -3,18 +3,12 @@ package org.telegram.ui;
 import static org.telegram.messenger.AndroidUtilities.dp;
 
 import android.content.Context;
-import android.graphics.Color;
-import android.graphics.Rect;
-import android.graphics.Typeface;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.CompoundButton;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.Switch;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -28,153 +22,114 @@ import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.askan.AskanFilter;
+import org.telegram.messenger.askan.AskanFilterLevels;
 import org.telegram.messenger.askan.AskanUiHelper;
+import org.telegram.tgnet.TLObject;
+import org.telegram.tgnet.TLRPC;
+import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.AlertDialog;
+import org.telegram.ui.ActionBar.BaseFragment;
+import org.telegram.ui.ActionBar.BottomSheet;
+import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Cells.HeaderCell;
+import org.telegram.ui.Cells.ShadowSectionCell;
+import org.telegram.ui.Cells.TextCell;
+import org.telegram.ui.Cells.TextInfoPrivacyCell;
+import org.telegram.ui.Components.AvatarDrawable;
+import org.telegram.ui.Components.BackupImageView;
+import org.telegram.ui.Components.LayoutHelper;
+import org.telegram.ui.Components.RecyclerListView;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.telegram.tgnet.TLRPC;
-import org.telegram.ui.ActionBar.ActionBar;
-import org.telegram.ui.ActionBar.AlertDialog;
-import org.telegram.ui.ActionBar.BaseFragment;
-import org.telegram.ui.ActionBar.Theme;
-import org.telegram.ui.Components.AvatarDrawable;
-import org.telegram.ui.Components.BackupImageView;
-import org.telegram.ui.Components.LayoutHelper;
-import org.telegram.ui.Components.RecyclerListView;
-
+/**
+ * "תוכן חסום" — the customer's own filter page, built from Telegram's own cells so it
+ * reads like a Telegram settings screen:
+ *
+ *   הבקשות שלי      requests waiting, plus recent answers (until acted on)
+ *   חסום כרגע       chats in the dialog list the filter holds back (first few + "show all")
+ *   הגדרות הסינון שלי → AskanFilterSettingsActivity
+ *   עזרה ותמיכה     → a sheet with the support actions
+ */
 public class AskanBlockedChatsActivity extends BaseFragment {
 
-    private static final int TYPE_SECTION_HEADER = 0;
-    private static final int TYPE_REQUEST        = 1;
-    private static final int TYPE_PRIVACY_TOGGLE = 2;
-    private static final int TYPE_BLOCKED_CHAT   = 3;
-    private static final int TYPE_ACTION         = 4;
-    private static final int TYPE_FILTER_OPTION  = 5;
+    private static final int TYPE_HEADER = 0;
+    private static final int TYPE_SHADOW = 1;
+    private static final int TYPE_INFO   = 2;
+    private static final int TYPE_ROW    = 3; // avatar row: a request or a blocked chat
+    private static final int TYPE_LINK   = 4;
 
-    private static final int ACTION_COPY_STATUS  = 1;
-    private static final int ACTION_SHARE_REPORT = 2;
-    private static final int ACTION_RECONNECT    = 3;
-    private static final int ACTION_VERIFY_ID    = 4;
+    private static final int LINK_SHOW_ALL = 1;
+    private static final int LINK_FILTER   = 2;
+    private static final int LINK_SUPPORT  = 3;
+    private static final int LINK_VERIFY   = 4;
 
     private static final int MAX_DECIDED = 5;
+    private static final int BLOCKED_PREVIEW = 5;
 
-    private static class ListItem {
-        final int viewType;
-        String headerTitle;
-        int    requestId;
-        String chatUsername, chatName, requestStatus;
-        String kind;
-        String privacyTarget;
-        String rejectReason;
-        boolean retrySent;
-        boolean isProfilePhotos;
-        boolean toggleValue;
-        String filterOption;
-        TLRPC.Chat chat;
-        TLRPC.User user;
-        boolean requestSent;
-        int actionId;
-        String actionTitle, actionSubtitle;
+    private static class Item {
+        final int type;
+        String text;
+        // links
+        int linkId; String value; int icon;
+        // request rows
+        AskanFilter.RequestInfo request; boolean queued; String queuedUsername, queuedName, queuedKind, queuedTarget;
+        // blocked rows
+        TLRPC.Chat chat; TLRPC.User user;
+        boolean divider;
 
-        private ListItem(int type) { this.viewType = type; }
-
-        static ListItem header(String title) {
-            ListItem i = new ListItem(TYPE_SECTION_HEADER); i.headerTitle = title; return i;
-        }
-        static ListItem request(int id, String username, String name, String status,
-                                String kind, String privacyTarget) {
-            ListItem i = new ListItem(TYPE_REQUEST);
-            i.requestId = id; i.chatUsername = username; i.chatName = name;
-            i.requestStatus = status; i.kind = kind; i.privacyTarget = privacyTarget;
-            return i;
-        }
-        static ListItem privacy(boolean isPhotos, boolean value) {
-            ListItem i = new ListItem(TYPE_PRIVACY_TOGGLE);
-            i.isProfilePhotos = isPhotos; i.toggleValue = value; return i;
-        }
-        static ListItem filter(String option) {
-            ListItem i = new ListItem(TYPE_FILTER_OPTION); i.filterOption = option; return i;
-        }
-        static ListItem blockedChat(TLRPC.Chat c) {
-            ListItem i = new ListItem(TYPE_BLOCKED_CHAT); i.chat = c; return i;
-        }
-        static ListItem blockedUser(TLRPC.User u) {
-            ListItem i = new ListItem(TYPE_BLOCKED_CHAT); i.user = u; return i;
-        }
-        static ListItem action(int id, String title, String subtitle) {
-            ListItem i = new ListItem(TYPE_ACTION);
-            i.actionId = id; i.actionTitle = title; i.actionSubtitle = subtitle; return i;
-        }
-
-        String displayName() {
-            if (chat != null) return chat.title != null ? chat.title : "";
-            if (user != null && user.first_name != null) return user.first_name;
-            if (chatName != null && !chatName.isEmpty()) return chatName;
-            return chatUsername != null ? chatUsername : "";
-        }
-        String typeLabel() {
-            if (user != null && user.bot) return "בוט";
-            if (chat != null && ChatObject.isMegagroup(chat)) return "קבוצה";
-            return "ערוץ";
-        }
-        String resolvedUsername() {
-            if (chat != null) return (chat.username != null && !chat.username.isEmpty()) ? chat.username : String.valueOf(chat.id);
-            if (user != null) return (user.username != null && !user.username.isEmpty()) ? user.username : String.valueOf(user.id);
-            return chatUsername != null ? chatUsername : "";
-        }
-        String initials() {
-            String name = displayName();
-            if (name.isEmpty()) return "?";
-            String[] parts = name.trim().split("\\s+");
-            if (parts.length >= 2) return String.valueOf(parts[0].charAt(0)).toUpperCase() + String.valueOf(parts[1].charAt(0)).toUpperCase();
-            return name.length() >= 2 ? name.substring(0, 2).toUpperCase() : name.substring(0, 1).toUpperCase();
+        Item(int type) { this.type = type; }
+        static Item header(String t) { Item i = new Item(TYPE_HEADER); i.text = t; return i; }
+        static Item shadow() { return new Item(TYPE_SHADOW); }
+        static Item info(String t) { Item i = new Item(TYPE_INFO); i.text = t; return i; }
+        static Item link(int id, String t, String value, int icon) {
+            Item i = new Item(TYPE_LINK); i.linkId = id; i.text = t; i.value = value; i.icon = icon; return i;
         }
     }
 
-    private final ArrayList<ListItem> items = new ArrayList<>();
+    private final ArrayList<Item> items = new ArrayList<>();
     private List<AskanFilter.RequestInfo> myRequests = new ArrayList<>();
+    private boolean showAllBlocked;
     private RecyclerListView listView;
     private ListAdapter adapter;
-    private TextView statPendingNum;
-    private TextView statBlockedNum;
-
-    // ── Avatar color palette (matches Telegram's approach) ────────────────────
-    private static final int[] AVATAR_COLORS = {
-        0xFF3B5BDB, 0xFF2F9E44, 0xFFC92A2A, 0xFF0C8599,
-        0xFF7048E8, 0xFFD6336C, 0xFF2B8A3E, 0xFF1864AB
-    };
-
-    private static int avatarColor(String name) {
-        if (name == null || name.isEmpty()) return AVATAR_COLORS[0];
-        return AVATAR_COLORS[Math.abs(name.hashCode()) % AVATAR_COLORS.length];
-    }
 
     @Override
     public boolean onFragmentCreate() {
         buildItems();
-        TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-        if (me != null) {
-            AskanFilter.getInstance().fetchMyRequests(me.phone,
-                    UserConfig.getInstance(currentAccount).getClientUserId(), requests -> {
-                        myRequests = requests;
-                        buildItems();
-                        if (adapter != null) adapter.notifyDataSetChanged();
-                    });
-        }
+        loadRequests();
         return super.onFragmentCreate();
+    }
+
+    private void loadRequests() {
+        TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
+        if (me == null) return;
+        AskanFilter.getInstance().fetchMyRequests(me.phone,
+                UserConfig.getInstance(currentAccount).getClientUserId(), requests -> {
+                    myRequests = requests;
+                    refresh();
+                });
+    }
+
+    private void refresh() {
+        buildItems();
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // back from the blocked sheet / filter settings / an opened chat
+        refresh();
     }
 
     @Override
     public View createView(Context context) {
         actionBar.setBackButtonImage(R.drawable.ic_ab_back);
-        actionBar.setBackgroundColor(0xFF0d0d14);
-        actionBar.setItemsColor(Color.WHITE, false);
-        actionBar.setItemsBackgroundColor(0x33FFFFFF, false);
-        actionBar.setTitle("");
-        actionBar.setOccupyStatusBar(true);
+        actionBar.setAllowOverlayTitle(true);
+        actionBar.setTitle("תוכן חסום");
         actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
             @Override public void onItemClick(int id) { if (id == -1) finishFragment(); }
         });
@@ -183,273 +138,280 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         root.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
         fragmentView = root;
 
-        // ── Hero ──────────────────────────────────────────────────────────────
-        LinearLayout hero = new LinearLayout(context);
-        hero.setOrientation(LinearLayout.VERTICAL);
-        hero.setBackgroundColor(0xFF0d0d14);
-        hero.setPadding(dp(18), dp(8), dp(18), dp(20));
-
-        // Page label
-        TextView pageLabel = new TextView(context);
-        pageLabel.setText("אזור שליטה");
-        pageLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-        pageLabel.setTypeface(Typeface.DEFAULT_BOLD);
-        pageLabel.setTextColor(Color.WHITE);
-        pageLabel.setGravity(Gravity.CENTER);
-        pageLabel.setPadding(0, 0, 0, dp(16));
-        hero.addView(pageLabel, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        // Stats row
-        LinearLayout statsRow = new LinearLayout(context);
-        statsRow.setOrientation(LinearLayout.HORIZONTAL);
-        statsRow.setGravity(Gravity.CENTER);
-
-        statPendingNum = new TextView(context);
-        statBlockedNum = new TextView(context);
-
-        statsRow.addView(makeStatCard(context, statPendingNum, "בקשות\nממתינות לטיפול", 0xFFF59E0B), makeStatLp());
-        View statGap = new View(context);
-        statsRow.addView(statGap, new LinearLayout.LayoutParams(dp(10), 1));
-        statsRow.addView(makeStatCard(context, statBlockedNum, "פריטים\nחסומים", 0xFFEF4444), makeStatLp());
-
-        hero.addView(statsRow, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        // ── List (added before hero so hero draws on top when scrolling) ─────
         listView = new RecyclerListView(context);
-        listView.setLayoutManager(new LinearLayoutManager(context));
+        listView.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
         listView.setVerticalScrollBarEnabled(false);
-        listView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
-        listView.setPadding(0, dp(14), 0, dp(20));
-        listView.setClipToPadding(false);
         listView.setAdapter(adapter = new ListAdapter(context));
-        listView.addItemDecoration(new CardGroupDecoration());
         listView.setOnItemClickListener((view, position) -> {
-            if (position >= 0 && position < items.size() && items.get(position).viewType == TYPE_ACTION) {
-                onAction(items.get(position).actionId);
-            }
+            if (position < 0 || position >= items.size()) return;
+            Item item = items.get(position);
+            if (item.type == TYPE_LINK) onLink(item.linkId);
+            else if (item.type == TYPE_ROW) onRowClick(item);
         });
-        root.addView(listView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-
-        // Hero added after list → draws on top; elevation keeps it above scroll
-        root.addView(hero, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
-        hero.setElevation(dp(4));
-
-        // Push list content below hero once hero height is known
-        root.post(() -> {
-            int heroH = hero.getHeight();
-            listView.setPadding(0, heroH + dp(8), 0, dp(20));
-        });
-
-        updateStats();
+        root.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         return fragmentView;
     }
 
-    private LinearLayout.LayoutParams makeStatLp() {
-        return new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-    }
-
-    private FrameLayout makeStatCard(Context ctx, TextView numView, String label, int dotColor) {
-        FrameLayout card = new FrameLayout(ctx);
-        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0x0FFFFFFF);
-        bg.setStroke(1, 0x1AFFFFFF);
-        bg.setCornerRadius(dp(16));
-        card.setBackground(bg);
-        card.setPadding(dp(14), dp(14), dp(14), dp(14));
-
-        LinearLayout inner = new LinearLayout(ctx);
-        inner.setOrientation(LinearLayout.VERTICAL);
-
-        // Number + dot row
-        LinearLayout numRow = new LinearLayout(ctx);
-        numRow.setOrientation(LinearLayout.HORIZONTAL);
-        numRow.setGravity(Gravity.CENTER_VERTICAL);
-
-        numView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
-        numView.setTypeface(Typeface.DEFAULT_BOLD);
-        numView.setTextColor(Color.WHITE);
-        numView.setText("0");
-        numRow.addView(numView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        View dot = new View(ctx);
-        android.graphics.drawable.GradientDrawable dotBg = new android.graphics.drawable.GradientDrawable();
-        dotBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        dotBg.setColor(dotColor);
-        dot.setBackground(dotBg);
-        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(6), dp(6));
-        dotLp.setMarginStart(dp(6));
-        numRow.addView(dot, dotLp);
-
-        inner.addView(numRow, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        TextView labelView = new TextView(ctx);
-        labelView.setText(label);
-        labelView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        labelView.setTextColor(0x66FFFFFF);
-        labelView.setLineSpacing(dp(2), 1f);
-        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        labelLp.topMargin = dp(5);
-        inner.addView(labelView, labelLp);
-
-        card.addView(inner, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
-        return card;
-    }
-
-    private void updateStats() {
-        if (statPendingNum == null || statBlockedNum == null) return;
-        long pending = myRequests.stream().filter(r -> "pending".equals(r.status)).count()
-                + queuedRequests().size();
-        long blocked = buildBlockedItems().size();
-        statPendingNum.setText(String.valueOf(pending));
-        statBlockedNum.setText(String.valueOf(blocked));
-    }
+    // ── Content ───────────────────────────────────────────────────────────────
 
     private void buildItems() {
         items.clear();
-        if (!myRequests.isEmpty()) {
-            Map<String, AskanFilter.RequestInfo> deduped = new LinkedHashMap<>();
-            for (AskanFilter.RequestInfo r : myRequests) {
-                String key = (r.chatUsername != null && !r.chatUsername.isEmpty()) ? r.chatUsername : ("id_" + r.id);
-                AskanFilter.RequestInfo existing = deduped.get(key);
-                if (existing == null || r.id > existing.id) deduped.put(key, r);
-            }
-            List<AskanFilter.RequestInfo> pending = new ArrayList<>();
-            List<AskanFilter.RequestInfo> decided = new ArrayList<>();
-            android.content.SharedPreferences seen = AskanFilter.reqStatusPrefs(ApplicationLoader.applicationContext);
-            for (AskanFilter.RequestInfo r : deduped.values()) {
-                if ("pending".equals(r.status)) pending.add(r);
-                // Answered requests stay only until the user acts on them (open / dismiss)
-                // or the server's window runs out (approved 3 days, rejected 7), and only
-                // the newest few — so this section never turns into a list nobody clears.
-                else if (("approved".equals(r.status) || "rejected".equals(r.status) || "blocked".equals(r.status))
-                        && r.id > 0 && !seen.getBoolean("done_" + r.id, false)
-                        && decided.size() < MAX_DECIDED) decided.add(r);
-            }
-            if (!pending.isEmpty()) {
-                items.add(ListItem.header("בקשות"));
-                for (AskanFilter.RequestInfo r : pending)
-                    { ListItem li = ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget);
-                      li.rejectReason = r.rejectReason; items.add(li); }
-            }
-            if (!decided.isEmpty()) {
-                items.add(ListItem.header("תשובות אחרונות"));
-                for (AskanFilter.RequestInfo r : decided)
-                    { ListItem li = ListItem.request(r.id, r.chatUsername, r.chatName, r.status, r.kind, r.privacyTarget);
-                      li.rejectReason = r.rejectReason; items.add(li); }
-            }
-        }
-        // Requests saved on the device while the server was unreachable.
-        List<org.json.JSONObject> queued = queuedRequests();
-        if (!queued.isEmpty()) {
-            boolean hasHeader = !items.isEmpty();
-            if (!hasHeader) items.add(ListItem.header("בקשות"));
-            for (org.json.JSONObject q : queued) {
-                items.add(ListItem.request(0, q.optString("chat_username"), q.optString("chat_name"),
-                        "queued", q.optString("kind"), q.optString("privacy_target")));
-            }
-        }
-        items.add(ListItem.header("הגדרות הסינון שלי"));
-        for (String opt : org.telegram.messenger.askan.AskanFilterLevels.OPTIONS.keySet()) {
-            items.add(ListItem.filter(opt));
-        }
-        items.add(ListItem.header("תמיכה"));
-        TLRPC.User meForId = UserConfig.getInstance(currentAccount).getCurrentUser();
-        if (meForId != null && AskanFilter.getInstance().hasIdentityMismatch(meForId.phone)) {
-            items.add(ListItem.action(ACTION_VERIFY_ID, "אימות חשבון טלגרם",
-                    "החשבון השתנה והשרת לא מזהה אותו. לחץ לאימות"));
-        }
-        items.add(ListItem.action(ACTION_COPY_STATUS, "העתקת פרטי מצב",
-                "פרטי החיבור של המכשיר, להדבקה בפנייה לתמיכה"));
-        items.add(ListItem.action(ACTION_SHARE_REPORT, "שליחת דוח לתמיכה",
-                "שליחת אותם פרטים בוואטסאפ, בטלגרם או במייל"));
-        items.add(ListItem.action(ACTION_RECONNECT, "רענון החיבור לשרת",
-                "כשבקשות נכשלות או שהרשימה לא מתעדכנת"));
-        List<ListItem> blocked = buildBlockedItems();
-        if (!blocked.isEmpty()) {
-            items.add(ListItem.header("תוכן חסום"));
-            items.addAll(blocked);
-        }
-        updateStats();
-    }
 
-    private List<org.json.JSONObject> queuedRequests() {
+        // ── My requests ──
+        List<Item> reqRows = new ArrayList<>();
+        Map<String, AskanFilter.RequestInfo> deduped = new LinkedHashMap<>();
+        for (AskanFilter.RequestInfo r : myRequests) {
+            String key = (r.chatUsername != null && !r.chatUsername.isEmpty()) ? r.chatUsername
+                    : (r.privacyTarget != null ? "opt_" + r.privacyTarget : "id_" + r.id);
+            AskanFilter.RequestInfo existing = deduped.get(key);
+            if (existing == null || r.id > existing.id) deduped.put(key, r);
+        }
+        android.content.SharedPreferences seen = AskanFilter.reqStatusPrefs(ApplicationLoader.applicationContext);
+        int decided = 0;
+        for (AskanFilter.RequestInfo r : deduped.values()) {
+            boolean pending = "pending".equals(r.status);
+            // Answered requests stay only until the user acts on them (open / dismiss)
+            // or the server's window runs out (approved 3 days, rejected 7).
+            boolean answered = ("approved".equals(r.status) || "rejected".equals(r.status) || "blocked".equals(r.status))
+                    && r.id > 0 && !seen.getBoolean("done_" + r.id, false) && decided < MAX_DECIDED;
+            if (!pending && !answered) continue;
+            if (answered) decided++;
+            Item i = new Item(TYPE_ROW);
+            i.request = r;
+            reqRows.add(i);
+        }
+        // requests saved on the device while the server was unreachable
         TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-        return AskanFilter.getInstance().getQueuedRequests(me != null ? me.phone : null);
+        for (org.json.JSONObject q : AskanFilter.getInstance().getQueuedRequests(me != null ? me.phone : null)) {
+            Item i = new Item(TYPE_ROW);
+            i.queued = true;
+            i.queuedUsername = q.optString("chat_username");
+            i.queuedName = q.optString("chat_name");
+            i.queuedKind = q.optString("kind");
+            i.queuedTarget = q.optString("privacy_target");
+            reqRows.add(i);
+        }
+        if (!reqRows.isEmpty()) {
+            items.add(Item.header("הבקשות שלי"));
+            addRows(reqRows);
+            items.add(Item.shadow());
+        }
+
+        // ── Blocked right now ──
+        List<Item> blocked = buildBlockedItems();
+        if (!blocked.isEmpty()) {
+            items.add(Item.header("חסום כרגע"));
+            boolean cut = !showAllBlocked && blocked.size() > BLOCKED_PREVIEW + 1;
+            addRows(cut ? blocked.subList(0, BLOCKED_PREVIEW) : blocked);
+            if (cut) {
+                if (!items.isEmpty()) items.get(items.size() - 1).divider = true;
+                items.add(Item.link(LINK_SHOW_ALL, "הצגת כל ה־" + blocked.size(), null, 0));
+            }
+            items.add(Item.info("ערוצים, קבוצות ובוטים מרשימת הצ'אטים שלך שעדיין לא אושרו. "
+                    + "אפשר לבקש גישה, והצוות יבדוק."));
+        } else if (reqRows.isEmpty()) {
+            items.add(Item.info("אין כרגע תוכן חסום ברשימת הצ'אטים שלך."));
+        }
+
+        // ── Settings & help ──
+        if (me != null && AskanFilter.getInstance().hasIdentityMismatch(me.phone)) {
+            Item v = Item.link(LINK_VERIFY, "אימות חשבון טלגרם", null, R.drawable.msg_info);
+            v.divider = true;
+            items.add(v);
+        }
+        int restricted = 0;
+        for (String opt : AskanFilterLevels.OPTIONS.keySet()) {
+            if (AskanFilterLevels.restricts(opt, AskanFilter.getInstance().getFilterOption(opt))) restricted++;
+        }
+        Item f = Item.link(LINK_FILTER, "הגדרות הסינון שלי",
+                restricted == 0 ? "ללא הגבלות" : restricted + " מוגבלים", R.drawable.msg_permissions);
+        f.divider = true;
+        items.add(f);
+        items.add(Item.link(LINK_SUPPORT, "עזרה ותמיכה", null, R.drawable.msg_help));
+        items.add(Item.shadow());
     }
 
-    private void onAction(int actionId) {
+    private void addRows(List<Item> rows) {
+        for (int k = 0; k < rows.size(); k++) {
+            Item i = rows.get(k);
+            i.divider = k < rows.size() - 1;
+            items.add(i);
+        }
+    }
+
+    private List<Item> buildBlockedItems() {
+        List<Item> result = new ArrayList<>();
+        MessagesController mc = MessagesController.getInstance(currentAccount);
+        AskanFilter filter = AskanFilter.getInstance();
+        for (TLRPC.Dialog dialog : mc.getAllDialogs()) {
+            long did = dialog.id;
+            Item i = null;
+            if (did < 0) {
+                TLRPC.Chat chat = mc.getChat(-did);
+                if (filter.isChatBlocked(chat, mc.getChatFull(-did))) { i = new Item(TYPE_ROW); i.chat = chat; }
+            } else if (did > 0) {
+                TLRPC.User user = mc.getUser(did);
+                if (filter.isUserBlocked(user)) { i = new Item(TYPE_ROW); i.user = user; }
+            }
+            if (i != null) result.add(i);
+        }
+        return result;
+    }
+
+    // ── Actions ───────────────────────────────────────────────────────────────
+
+    private void onLink(int id) {
         Context ctx = getParentActivity();
         if (ctx == null) return;
-        AskanFilter filter = AskanFilter.getInstance();
-        switch (actionId) {
-            case ACTION_COPY_STATUS: {
-                AndroidUtilities.addToClipboard(filter.buildStatusReport(currentAccount));
-                android.widget.Toast.makeText(ctx, "פרטי המצב הועתקו", android.widget.Toast.LENGTH_SHORT).show();
+        switch (id) {
+            case LINK_SHOW_ALL:
+                showAllBlocked = true;
+                refresh();
                 break;
-            }
-            case ACTION_SHARE_REPORT: {
-                android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND);
-                send.setType("text/plain");
-                send.putExtra(android.content.Intent.EXTRA_TEXT, filter.buildStatusReport(currentAccount));
-                try {
-                    ctx.startActivity(android.content.Intent.createChooser(send, "שליחת דוח לתמיכה"));
-                } catch (Exception e) {
-                    android.widget.Toast.makeText(ctx, "לא נמצאה אפליקציה לשליחה", android.widget.Toast.LENGTH_SHORT).show();
-                }
+            case LINK_FILTER:
+                presentFragment(new AskanFilterSettingsActivity());
                 break;
-            }
-            case ACTION_VERIFY_ID: {
+            case LINK_VERIFY:
                 AskanUiHelper.showIdentityDialog(ctx, currentAccount);
                 break;
-            }
-            case ACTION_RECONNECT: {
-                TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-                if (me == null) return;
-                new AlertDialog.Builder(ctx)
-                        .setTitle("רענון החיבור לשרת")
-                        .setMessage("החיבור של המכשיר לשרת הסינון ייווצר מחדש וההרשאות יסונכרנו שוב. "
-                                + "החשבון בטלגרם, הצ'אטים וההגדרות לא ישתנו.")
-                        .setPositiveButton("רענון", (d, w) -> filter.resetConnection(me.phone,
-                                UserConfig.getInstance(currentAccount).getClientUserId(), ok -> {
-                                    Context c = getParentActivity();
-                                    if (c == null) return;
-                                    android.widget.Toast.makeText(c, ok
-                                            ? "החיבור חודש. ההרשאות מתעדכנות"
-                                            : "לא ניתן להתחבר לשרת כרגע. נסה שוב בעוד כמה דקות",
-                                            android.widget.Toast.LENGTH_LONG).show();
-                                }))
-                        .setNegativeButton("ביטול", null)
-                        .show();
+            case LINK_SUPPORT:
+                showSupport(ctx);
                 break;
-            }
         }
     }
 
-    /** The user acted on an answered request — drop it from "recent answers" for good. */
-    private void markDone(ListItem item) {
-        markDoneLater(item);
-        int idx = items.indexOf(item);
-        if (idx < 0) return;
-        items.remove(idx);
-        // Drop the section header too when this was its last row.
-        if (idx > 0 && items.get(idx - 1).viewType == TYPE_SECTION_HEADER
-                && (idx >= items.size() || items.get(idx).viewType == TYPE_SECTION_HEADER)) {
-            items.remove(idx - 1);
-        }
-        if (adapter != null) adapter.notifyDataSetChanged();
+    private void showSupport(Context ctx) {
+        AskanFilter filter = AskanFilter.getInstance();
+        BottomSheet.Builder b = new BottomSheet.Builder(ctx);
+        b.setTitle("עזרה ותמיכה");
+        b.setItems(new CharSequence[]{"העתקת פרטי מצב", "שליחת דוח לתמיכה", "רענון החיבור לשרת"},
+                new int[]{R.drawable.msg_copy, R.drawable.msg_share, R.drawable.msg_retry}, (d, which) -> {
+                    if (which == 0) {
+                        AndroidUtilities.addToClipboard(filter.buildStatusReport(currentAccount));
+                        android.widget.Toast.makeText(ctx, "פרטי המצב הועתקו", android.widget.Toast.LENGTH_SHORT).show();
+                    } else if (which == 1) {
+                        android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND);
+                        send.setType("text/plain");
+                        send.putExtra(android.content.Intent.EXTRA_TEXT, filter.buildStatusReport(currentAccount));
+                        try {
+                            ctx.startActivity(android.content.Intent.createChooser(send, "שליחת דוח לתמיכה"));
+                        } catch (Exception e) {
+                            android.widget.Toast.makeText(ctx, "לא נמצאה אפליקציה לשליחה", android.widget.Toast.LENGTH_SHORT).show();
+                        }
+                    } else {
+                        confirmReconnect(ctx);
+                    }
+                });
+        showDialog(b.create());
     }
 
-    /** Same, but the row stays visible until the screen is next opened (shows "נשלח ✓"). */
-    private void markDoneLater(ListItem item) {
-        if (item.requestId <= 0) return;
-        AskanFilter.reqStatusPrefs(ApplicationLoader.applicationContext).edit()
-                .putBoolean("done_" + item.requestId, true).apply();
+    private void confirmReconnect(Context ctx) {
+        TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
+        if (me == null) return;
+        new AlertDialog.Builder(ctx)
+                .setTitle("רענון החיבור לשרת")
+                .setMessage("החיבור של המכשיר לשרת הסינון ייווצר מחדש וההרשאות יסונכרנו שוב. "
+                        + "החשבון בטלגרם, הצ'אטים וההגדרות לא ישתנו.")
+                .setPositiveButton("רענון", (d, w) -> AskanFilter.getInstance().resetConnection(me.phone,
+                        UserConfig.getInstance(currentAccount).getClientUserId(), ok -> {
+                            Context c = getParentActivity();
+                            if (c == null) return;
+                            android.widget.Toast.makeText(c, ok
+                                    ? "החיבור חודש. ההרשאות מתעדכנות"
+                                    : "לא ניתן להתחבר לשרת כרגע. נסו שוב בעוד כמה דקות",
+                                    android.widget.Toast.LENGTH_LONG).show();
+                        }))
+                .setNegativeButton("ביטול", null)
+                .show();
+    }
+
+    private void onRowClick(Item item) {
+        Context ctx = getParentActivity();
+        if (ctx == null) return;
+        if (item.chat != null || item.user != null) {
+            AskanUiHelper.showBlockedSheet(ctx, currentAccount, item.chat, item.user);
+            return;
+        }
+        AskanFilter.RequestInfo r = item.request;
+        if (r == null) return;
+        if ("approved".equals(r.status)) {
+            if (isFilterKind(r.kind)) markDone(r);
+            else { markDone(r); openApproved(r.chatUsername); }
+        } else if ("rejected".equals(r.status) || "blocked".equals(r.status)) {
+            showRejected(ctx, r);
+        }
+    }
+
+    private void onRowButton(Item item) {
+        Context ctx = getParentActivity();
+        if (ctx == null) return;
+        if (item.chat != null || item.user != null) {
+            AskanUiHelper.showBlockedSheet(ctx, currentAccount, item.chat, item.user);
+            return;
+        }
+        AskanFilter.RequestInfo r = item.request;
+        if (r == null) return;
+        if ("approved".equals(r.status)) {
+            markDone(r);
+            if (!isFilterKind(r.kind)) openApproved(r.chatUsername);
+        } else if ("blocked".equals(r.status)) {
+            markDone(r);
+        } else if ("rejected".equals(r.status)) {
+            askAgain(ctx, r);
+        }
+    }
+
+    private void showRejected(Context ctx, AskanFilter.RequestInfo r) {
+        String why = AskanFilter.rejectReasonText(r.rejectReason);
+        boolean canAsk = "rejected".equals(r.status);
+        AlertDialog.Builder b = new AlertDialog.Builder(ctx)
+                .setTitle("הבקשה לא אושרה")
+                .setMessage(why != null ? why
+                        : (canAsk ? "הצוות לא אישר את הבקשה." : "הצוות בדק וחסם את זה, ולכן אי אפשר לבקש שוב."));
+        if (canAsk) {
+            b.setPositiveButton("בקשה חוזרת", (d, w) -> askAgain(ctx, r));
+            b.setNegativeButton("סגירה", (d, w) -> markDone(r));
+        } else {
+            b.setPositiveButton("הבנתי", (d, w) -> markDone(r));
+        }
+        b.show();
+    }
+
+    private void askAgain(Context ctx, AskanFilter.RequestInfo r) {
+        if (isFilterKind(r.kind)) {
+            TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
+            if (me == null) return;
+            String loosest = AskanFilterLevels.BASIC.get(r.privacyTarget);
+            AskanFilter.getInstance().sendFilterRequest(me.phone,
+                    UserConfig.getInstance(currentAccount).getClientUserId(),
+                    r.privacyTarget, loosest != null ? loosest : "show",
+                    (st, until) -> {
+                        if ("pending".equals(st) || "already_pending".equals(st)) {
+                            markDone(r);
+                            loadRequests();
+                        } else {
+                            AskanFilterSettingsActivity.showRequestResult(getParentActivity(), st, until);
+                        }
+                    });
+        } else {
+            String name = (r.chatName != null && !r.chatName.isEmpty()) ? r.chatName : r.chatUsername;
+            String subject = AskanFilter.reqStatusPrefs(ctx).getString("subj_" + r.chatUsername, "ערוץ");
+            AskanUiHelper.showAccessRequestNoteDialog(ctx, currentAccount, r.chatUsername, name, subject,
+                    () -> { markDone(r); loadRequests(); });
+        }
+    }
+
+    /** The user acted on an answered request — drop it from the list for good. */
+    private void markDone(AskanFilter.RequestInfo r) {
+        if (r.id > 0) {
+            AskanFilter.reqStatusPrefs(ApplicationLoader.applicationContext).edit()
+                    .putBoolean("done_" + r.id, true).apply();
+        }
+        refresh();
+    }
+
+    private static boolean isFilterKind(String kind) {
+        return "privacy".equals(kind) || "filter".equals(kind);
     }
 
     /** Opens the channel/group/bot of an approved request. */
@@ -480,779 +442,257 @@ public class AskanBlockedChatsActivity extends BaseFragment {
         }
     }
 
-    private List<ListItem> buildBlockedItems() {
-        List<ListItem> result = new ArrayList<>();
-        MessagesController mc = MessagesController.getInstance(currentAccount);
-        AskanFilter filter = AskanFilter.getInstance();
-        for (TLRPC.Dialog dialog : mc.getAllDialogs()) {
-            long did = dialog.id;
-            if (did < 0) {
-                TLRPC.Chat chat = mc.getChat(-did);
-                TLRPC.ChatFull full = mc.getChatFull(-did);
-                if (filter.isChatBlocked(chat, full)) result.add(ListItem.blockedChat(chat));
-            } else if (did > 0) {
-                TLRPC.User user = mc.getUser(did);
-                if (filter.isUserBlocked(user)) result.add(ListItem.blockedUser(user));
-            }
-        }
-        return result;
-    }
-
     // ── Adapter ───────────────────────────────────────────────────────────────
 
     private class ListAdapter extends RecyclerListView.SelectionAdapter {
         private final Context ctx;
         ListAdapter(Context c) { ctx = c; }
+
         @Override public int getItemCount() { return items.size(); }
-        @Override public int getItemViewType(int pos) { return items.get(pos).viewType; }
-        @Override public boolean isEnabled(RecyclerView.ViewHolder h) { return h.getItemViewType() == TYPE_ACTION; }
+        @Override public int getItemViewType(int pos) { return items.get(pos).type; }
+
+        @Override
+        public boolean isEnabled(RecyclerView.ViewHolder h) {
+            int t = h.getItemViewType();
+            return t == TYPE_LINK || t == TYPE_ROW;
+        }
 
         @NonNull
         @Override
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            View cell;
+            View v;
             switch (viewType) {
-                case TYPE_SECTION_HEADER: cell = new SectionHeaderCell(ctx); break;
-                case TYPE_REQUEST:        cell = new RequestCell(ctx);        break;
-                case TYPE_PRIVACY_TOGGLE: cell = new PrivacyToggleCell(ctx);  break;
-                case TYPE_FILTER_OPTION:  cell = new FilterOptionCell(ctx);   break;
-                case TYPE_ACTION:         cell = new ActionCell(ctx);         break;
-                default:                  cell = new BlockedChatCell(ctx);    break;
+                case TYPE_HEADER:
+                    v = new HeaderCell(ctx);
+                    v.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                    break;
+                case TYPE_SHADOW:
+                    v = new ShadowSectionCell(ctx);
+                    break;
+                case TYPE_INFO:
+                    v = new TextInfoPrivacyCell(ctx);
+                    v.setBackground(Theme.getThemedDrawableByKey(ctx, R.drawable.greydivider_bottom, Theme.key_windowBackgroundGrayShadow));
+                    break;
+                case TYPE_LINK:
+                    v = new TextCell(ctx);
+                    v.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                    break;
+                default:
+                    v = new RowCell(ctx);
+                    break;
             }
-            // Without explicit params RecyclerView wraps each card to its content width,
-            // so cards of different lengths came out ragged.
-            cell.setLayoutParams(new RecyclerView.LayoutParams(
+            v.setLayoutParams(new RecyclerView.LayoutParams(
                     RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
-            return new RecyclerListView.Holder(cell);
+            return new RecyclerListView.Holder(v);
         }
 
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-            ListItem item = items.get(position);
-            switch (item.viewType) {
-                case TYPE_SECTION_HEADER: ((SectionHeaderCell) holder.itemView).bind(item.headerTitle); break;
-                case TYPE_REQUEST:        ((RequestCell) holder.itemView).bind(item, position); break;
-                case TYPE_PRIVACY_TOGGLE: ((PrivacyToggleCell) holder.itemView).bind(item, position); break;
-                case TYPE_FILTER_OPTION:  ((FilterOptionCell) holder.itemView).bind(item, position); break;
-                case TYPE_ACTION:         ((ActionCell) holder.itemView).bind(item, position); break;
-                case TYPE_BLOCKED_CHAT:
-                    boolean nextIsChat = (position + 1 < items.size())
-                            && items.get(position + 1).viewType == TYPE_BLOCKED_CHAT;
-                    ((BlockedChatCell) holder.itemView).bind(item, position, nextIsChat);
+            Item item = items.get(position);
+            switch (item.type) {
+                case TYPE_HEADER:
+                    ((HeaderCell) holder.itemView).setText(item.text);
+                    break;
+                case TYPE_INFO:
+                    ((TextInfoPrivacyCell) holder.itemView).setText(item.text);
+                    break;
+                case TYPE_LINK: {
+                    TextCell c = (TextCell) holder.itemView;
+                    if (item.icon != 0) {
+                        c.setTextAndValueAndIcon(item.text, item.value, item.icon, item.divider);
+                    } else {
+                        c.setText(item.text, item.divider);
+                        c.setColors(Theme.key_windowBackgroundWhiteBlueIcon, Theme.key_windowBackgroundWhiteBlueText4);
+                    }
+                    if (item.icon != 0) {
+                        c.setColors(Theme.key_windowBackgroundWhiteGrayIcon, Theme.key_windowBackgroundWhiteBlackText);
+                    }
+                    break;
+                }
+                case TYPE_ROW:
+                    ((RowCell) holder.itemView).bind(item);
                     break;
             }
         }
     }
 
-    // ── SectionHeaderCell ─────────────────────────────────────────────────────
+    // ── Avatar row: same proportions as Telegram's UserCell ───────────────────
 
-    private static class SectionHeaderCell extends TextView {
-        SectionHeaderCell(Context ctx) {
+    private class RowCell extends FrameLayout {
+        private final BackupImageView avatar;
+        private final AvatarDrawable avatarDrawable = new AvatarDrawable();
+        private final TextView nameView, statusView, button;
+        private boolean needDivider;
+
+        RowCell(Context ctx) {
             super(ctx);
-            setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText2));
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-            setTypeface(Typeface.DEFAULT_BOLD);
-            setAllCaps(true);
-            setLetterSpacing(0.08f);
-            setPadding(dp(18), dp(16), dp(18), dp(6));
-            setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
-        }
-        void bind(String title) { setText(title); }
+            setWillNotDraw(false);
+            setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
 
-        @Override
-        protected void onMeasure(int w, int h) {
-            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(38), MeasureSpec.EXACTLY));
-        }
-    }
-
-    // ── Shared card background ─────────────────────────────────────────────────
-
-    private static android.graphics.drawable.GradientDrawable cardBg(Context ctx) {
-        android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable();
-        d.setColor(Theme.getColor(Theme.key_windowBackgroundWhite));
-        d.setCornerRadius(dp(18));
-        return d;
-    }
-
-    // ── Shared avatar (circle with initials fallback) ─────────────────────────
-
-    private static TextView makeInitialsAvatar(Context ctx, String name) {
-        TextView av = new TextView(ctx);
-        av.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        av.setTypeface(Typeface.DEFAULT_BOLD);
-        av.setTextColor(Color.WHITE);
-        av.setGravity(Gravity.CENTER);
-        android.graphics.drawable.GradientDrawable avBg = new android.graphics.drawable.GradientDrawable();
-        avBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        avBg.setColor(avatarColor(name));
-        av.setBackground(avBg);
-        av.setText(initialsOf(name));
-        return av;
-    }
-
-    private static String initialsOf(String name) {
-        if (name == null || name.isEmpty()) return "?";
-        String[] parts = name.trim().split("\\s+");
-        if (parts.length >= 2) return (parts[0].charAt(0) + "" + parts[1].charAt(0)).toUpperCase();
-        return (name.length() >= 2 ? name.substring(0, 2) : name.substring(0, 1)).toUpperCase();
-    }
-
-    // ── Shared action button — solid accent fill + white text ──────────────────
-    // Filled (not outline) so the label is high-contrast and readable in both
-    // light and dark mode (outline-on-dark was nearly invisible).
-    private static TextView makeOutlineBtn(Context ctx, String text) {
-        int accent = Theme.getColor(Theme.key_featuredStickers_addButton);
-        TextView btn = new TextView(ctx);
-        btn.setText(text);
-        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        btn.setTypeface(Typeface.DEFAULT_BOLD);
-        btn.setTextColor(Color.WHITE);
-        btn.setGravity(Gravity.CENTER);
-        btn.setPadding(dp(14), dp(7), dp(14), dp(7));
-        android.graphics.drawable.GradientDrawable btnBg = new android.graphics.drawable.GradientDrawable();
-        btnBg.setColor(accent);
-        btnBg.setCornerRadius(dp(10));
-        btn.setBackground(btnBg);
-        return btn;
-    }
-
-    // ── RequestCell ───────────────────────────────────────────────────────────
-
-    private class RequestCell extends FrameLayout {
-        private final BackupImageView avatarImg;
-        private final AvatarDrawable  avatarDrawable;
-        private final TextView        initialsView;
-        private final TextView        nameView;
-        private final TextView        statusView;
-        private final TextView        retryButton;
-        private final View            divider;
-
-        RequestCell(Context ctx) {
-            super(ctx);
-            setBackground(cardBg(ctx));
-
-            avatarDrawable = new AvatarDrawable();
-            avatarImg = new BackupImageView(ctx);
-            avatarImg.setRoundRadius(dp(21));
-            addView(avatarImg, LayoutHelper.createFrame(42, 42, Gravity.START | Gravity.CENTER_VERTICAL, 14, 0, 0, 0));
-
-            initialsView = makeInitialsAvatar(ctx, "");
-            addView(initialsView, LayoutHelper.createFrame(42, 42, Gravity.START | Gravity.CENTER_VERTICAL, 14, 0, 0, 0));
+            avatar = new BackupImageView(ctx);
+            avatar.setRoundRadius(dp(23));
+            addView(avatar, LayoutHelper.createFrame(46, 46, Gravity.START | Gravity.CENTER_VERTICAL, 13, 0, 13, 0));
 
             nameView = new TextView(ctx);
+            nameView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            nameView.setTypeface(AndroidUtilities.bold());
             nameView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-            nameView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            nameView.setTypeface(Typeface.DEFAULT_BOLD);
-            nameView.setMaxLines(1);
+            nameView.setSingleLine(true);
             nameView.setEllipsize(TextUtils.TruncateAt.END);
-            addView(nameView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP, 68, 11, 110, 0));
+            nameView.setGravity(Gravity.START);
+            addView(nameView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
+                    Gravity.START | Gravity.TOP, 72, 10, 112, 0));
 
             statusView = new TextView(ctx);
-            statusView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            addView(statusView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.BOTTOM, 68, 0, 110, 11));
+            statusView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            statusView.setSingleLine(true);
+            statusView.setEllipsize(TextUtils.TruncateAt.END);
+            statusView.setGravity(Gravity.START);
+            addView(statusView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
+                    Gravity.START | Gravity.TOP, 72, 33, 112, 0));
 
-            retryButton = makeOutlineBtn(ctx, "בקש שוב");
-            addView(retryButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
+            button = new TextView(ctx);
+            button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            button.setTypeface(AndroidUtilities.bold());
+            button.setGravity(Gravity.CENTER);
+            button.setPadding(dp(14), 0, dp(14), 0);
+            addView(button, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 28,
                     Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 14, 0));
-
-            divider = new View(ctx);
-            divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
-            addView(divider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 0.5f,
-                    Gravity.BOTTOM | Gravity.START, 68, 0, 0, 0));
         }
 
-        void bind(ListItem item, int position) {
-            statusView.setOnClickListener(null); // recycled rows: only a rejected row with a reason is tappable
-            boolean isPrivacy = "privacy".equals(item.kind) || "filter".equals(item.kind);
+        void bind(Item item) {
+            needDivider = item.divider;
+            button.setOnClickListener(v -> onRowButton(item));
+            if (item.chat != null || item.user != null) bindBlocked(item);
+            else bindRequest(item);
+            invalidate();
+        }
+
+        private void bindBlocked(Item item) {
             String name;
-            if (isPrivacy) {
-                name = org.telegram.messenger.askan.AskanFilterLevels.optionLabel(item.privacyTarget);
-            } else {
-                name = (item.chatName != null && !item.chatName.isEmpty()) ? item.chatName : item.chatUsername;
-            }
-            nameView.setText(name != null ? name : "");
-
-            avatarImg.setVisibility(View.GONE);
-            initialsView.setVisibility(View.VISIBLE);
-            android.graphics.drawable.GradientDrawable avBg = new android.graphics.drawable.GradientDrawable();
-            avBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-            if (isPrivacy) {
-                // Distinct icon for privacy items — purple background with symbol
-                avBg.setColor(0xFF7048E8);
-                initialsView.setText("profile_photos".equals(item.privacyTarget) ? "📷" : "▶");
-                initialsView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
-            } else {
-                String displayName = name != null ? name : "";
-                avBg.setColor(avatarColor(displayName));
-                initialsView.setText(initialsOf(displayName));
-                initialsView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-            }
-            initialsView.setBackground(avBg);
-
-            boolean isPending = "pending".equals(item.requestStatus);
-            if ("queued".equals(item.requestStatus)) {
-                statusView.setText("נשמרה במכשיר, תישלח כשיהיה חיבור");
-                statusView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-                statusView.setTypeface(Typeface.DEFAULT);
-                retryButton.setVisibility(View.GONE);
-            } else if (isPending) {
-                // Pill badge
-                statusView.setText("ממתינה לטיפול ⏳");
-                statusView.setTextColor(Theme.getColor(Theme.key_color_orange));
-                statusView.setTypeface(Typeface.DEFAULT_BOLD);
-                retryButton.setVisibility(View.GONE);
-            } else if ("blocked".equals(item.requestStatus)) {
-                // Rejected and blocked by the team — asking again is pointless.
-                statusView.setText("לא אושרה");
-                statusView.setTextColor(Theme.getColor(Theme.key_text_RedBold));
-                statusView.setTypeface(Typeface.DEFAULT_BOLD);
-                retryButton.setVisibility(View.VISIBLE);
-                retryButton.setText("הבנתי");
-                retryButton.setAlpha(1f);
-                retryButton.setEnabled(true);
-                retryButton.setOnClickListener(v -> markDone(item));
-            } else if ("approved".equals(item.requestStatus)) {
-                statusView.setText("אושרה ✓");
-                statusView.setTextColor(Theme.getColor(Theme.key_color_green));
-                statusView.setTypeface(Typeface.DEFAULT_BOLD);
-                retryButton.setVisibility(View.VISIBLE);
-                retryButton.setText(isPrivacy ? "הבנתי" : "פתח");
-                retryButton.setAlpha(1f);
-                retryButton.setEnabled(true);
-                retryButton.setOnClickListener(v -> {
-                    markDone(item);
-                    if (!isPrivacy) openApproved(item.chatUsername);
-                });
-            } else {
-                final String why = AskanFilter.rejectReasonText(item.rejectReason);
-                statusView.setText(why != null ? "לא אושרה · למה?" : "לא אושרה");
-                statusView.setTextColor(Theme.getColor(Theme.key_text_RedBold));
-                statusView.setTypeface(Typeface.DEFAULT_BOLD);
-                if (why != null) {
-                    statusView.setOnClickListener(v -> {
-                        Context c = getParentActivity();
-                        if (c != null) new AlertDialog.Builder(c).setTitle("סיבת הדחייה").setMessage(why).setPositiveButton("הבנתי", null).show();
-                    });
-                } else {
-                    statusView.setOnClickListener(null);
-                }
-                retryButton.setVisibility(View.VISIBLE);
-                if (item.retrySent) {
-                    retryButton.setText("נשלח ✓");
-                    retryButton.setAlpha(0.5f);
-                    retryButton.setEnabled(false);
-                    retryButton.setOnClickListener(null);
-                } else {
-                    retryButton.setText("בקש שוב");
-                    retryButton.setAlpha(1f);
-                    retryButton.setEnabled(true);
-                    retryButton.setOnClickListener(v -> {
-                        if (isPrivacy) {
-                            item.retrySent = true;
-                            retryButton.setText("נשלח ✓");
-                            retryButton.setAlpha(0.5f);
-                            retryButton.setEnabled(false);
-                            TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-                            if (me == null) return;
-                            String loosest = org.telegram.messenger.askan.AskanFilterLevels.BASIC.get(item.privacyTarget);
-                            AskanFilter.getInstance().sendFilterRequest(me.phone,
-                                    UserConfig.getInstance(currentAccount).getClientUserId(),
-                                    item.privacyTarget, loosest != null ? loosest : "show",
-                                    (st, until) -> {
-                                        if ("pending".equals(st) || "already_pending".equals(st)) {
-                                            markDoneLater(item);
-                                        } else {
-                                            item.retrySent = false;
-                                            showFilterRequestResult(st, until);
-                                        }
-                                        if (adapter != null) adapter.notifyItemChanged(position);
-                                    });
-                        } else {
-                            Context parentCtx = getParentActivity();
-                            if (parentCtx == null) return;
-                            String chatName2 = (item.chatName != null && !item.chatName.isEmpty()) ? item.chatName : item.chatUsername;
-                            String savedSubject = org.telegram.messenger.askan.AskanFilter.reqStatusPrefs(parentCtx)
-                                    .getString("subj_" + item.chatUsername, "ערוץ");
-                            AskanUiHelper.showAccessRequestNoteDialog(parentCtx, currentAccount,
-                                    item.chatUsername, chatName2, savedSubject,
-                                    () -> { item.retrySent = true; markDoneLater(item); if (adapter != null) adapter.notifyItemChanged(position); });
-                        }
-                    });
-                }
-            }
-
-            boolean nextIsRequest = (position + 1 < items.size())
-                    && items.get(position + 1).viewType == TYPE_REQUEST;
-            divider.setVisibility(nextIsRequest ? View.VISIBLE : View.GONE);
-        }
-
-        @Override
-        protected void onMeasure(int w, int h) {
-            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(64), MeasureSpec.EXACTLY));
-        }
-    }
-
-    // ── Filter levels ─────────────────────────────────────────────────────────
-
-    private boolean hasPendingFilterRequest(String option) {
-        for (AskanFilter.RequestInfo r : myRequests) {
-            if (("privacy".equals(r.kind) || "filter".equals(r.kind))
-                    && option.equals(r.privacyTarget) && "pending".equals(r.status)) return true;
-        }
-        return false;
-    }
-
-    /** Explains a request that was not sent (cooldown / admin only / error). */
-    private void showFilterRequestResult(String status, String until) {
-        Context ctx = getParentActivity();
-        if (ctx == null) return;
-        String msg;
-        if ("cooldown".equals(status)) {
-            String d = AskanFilter.shortDate(until);
-            msg = "הסתרת את זה לאחרונה. אפשר יהיה לבקש פתיחה" + (d.isEmpty() ? " בעוד כמה ימים." : " החל מ-" + d + ".");
-        } else if ("admin_only".equals(status)) {
-            msg = "ההגדרה הזו נפתחה ונסגרה כמה פעמים לאחרונה. מעכשיו רק מנהל יכול לפתוח אותה — פנה לתמיכה.";
-        } else if ("already_open".equals(status)) {
-            msg = "ההגדרה כבר פתוחה.";
-        } else {
-            msg = "שגיאה בשליחת הבקשה. נסה שוב.";
-        }
-        new AlertDialog.Builder(ctx).setMessage(msg).setPositiveButton("סגור", null).show();
-    }
-
-    private void afterFilterChange() {
-        buildItems();
-        if (adapter != null) adapter.notifyDataSetChanged();
-    }
-
-    private void tightenFilter(String option, String value) {
-        Context ctx = getParentActivity();
-        if (ctx == null) return;
-        new AlertDialog.Builder(ctx)
-                .setTitle("החמרה")
-                .setMessage(org.telegram.messenger.askan.AskanFilterLevels.optionLabel(option) + ": "
-                        + org.telegram.messenger.askan.AskanFilterLevels.valueLabel(value)
-                        + "\n\nאחרי ההחמרה אפשר לחזור רק באישור מנהל, ורק אחרי תקופת המתנה. להמשיך?")
-                .setPositiveButton("המשך", (d, w) -> {
-                    TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-                    if (me == null) return;
-                    AskanFilter.getInstance().sendFilterTighten(me.phone,
-                            UserConfig.getInstance(currentAccount).getClientUserId(), option, value,
-                            this::afterFilterChange,
-                            () -> {
-                                Context c2 = getParentActivity();
-                                if (c2 != null) new AlertDialog.Builder(c2).setMessage("שגיאה בעדכון ההגדרה. נסה שוב.").setPositiveButton("סגור", null).show();
-                            });
-                })
-                .setNegativeButton("ביטול", null).show();
-    }
-
-    private void requestLoosen(String option, String value) {
-        TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-        if (me == null) return;
-        AskanFilter.getInstance().sendFilterRequest(me.phone,
-                UserConfig.getInstance(currentAccount).getClientUserId(), option, value,
-                (status, until) -> {
-                    if ("pending".equals(status) || "already_pending".equals(status)) {
-                        List<AskanFilter.RequestInfo> updated = new ArrayList<>(myRequests);
-                        updated.add(new AskanFilter.RequestInfo(0, "", "", "pending", "filter", option));
-                        myRequests = updated;
-                        afterFilterChange();
-                        Context ctx = getParentActivity();
-                        if (ctx != null) new AlertDialog.Builder(ctx).setMessage("הבקשה נשלחה למנהל.").setPositiveButton("סגור", null).show();
-                    } else {
-                        showFilterRequestResult(status, until);
-                    }
-                });
-    }
-
-    /** Lists every value: stricter ones apply at once, looser ones send a request. */
-    private void showFilterChooser(String option) {
-        Context ctx = getParentActivity();
-        if (ctx == null) return;
-        String current = AskanFilter.getInstance().getFilterOption(option);
-        List<String> values = new ArrayList<>(org.telegram.messenger.askan.AskanFilterLevels.OPTIONS.get(option).keySet());
-        List<String> shown = new ArrayList<>();
-        List<CharSequence> labels = new ArrayList<>();
-        for (String v : values) {
-            if (v.equals(current)) continue;
-            boolean stricter = org.telegram.messenger.askan.AskanFilterLevels.isStricter(option, v, current);
-            boolean looser = org.telegram.messenger.askan.AskanFilterLevels.isStricter(option, current, v);
-            if (!stricter && !looser) continue; // sideways (e.g. contacts ↔ photos): not offered
-            shown.add(v);
-            labels.add(org.telegram.messenger.askan.AskanFilterLevels.valueLabel(v) + (stricter ? "  (מיידי)" : "  (בקשה למנהל)"));
-        }
-        if (shown.isEmpty()) return;
-        new AlertDialog.Builder(ctx)
-                .setTitle(org.telegram.messenger.askan.AskanFilterLevels.optionLabel(option))
-                .setItems(labels.toArray(new CharSequence[0]), (d, which) -> {
-                    String v = shown.get(which);
-                    if (org.telegram.messenger.askan.AskanFilterLevels.isStricter(option, v, current)) tightenFilter(option, v);
-                    else requestLoosen(option, v);
-                })
-                .setNegativeButton("ביטול", null).show();
-    }
-
-    private class FilterOptionCell extends FrameLayout {
-        private final TextView labelView;
-        private final TextView hintView;
-        private final TextView actionButton;
-        private final View divider;
-
-        FilterOptionCell(Context ctx) {
-            super(ctx);
-            setBackground(cardBg(ctx));
-            labelView = new TextView(ctx);
-            labelView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-            labelView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            labelView.setTypeface(Typeface.DEFAULT_BOLD);
-            addView(labelView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP, 16, 12, 120, 0));
-            hintView = new TextView(ctx);
-            hintView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            addView(hintView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.BOTTOM, 16, 0, 120, 12));
-            actionButton = makeOutlineBtn(ctx, "שינוי");
-            addView(actionButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 14, 0));
-            divider = new View(ctx);
-            divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
-            addView(divider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 0.5f,
-                    Gravity.BOTTOM | Gravity.START, 16, 0, 0, 0));
-        }
-
-        void bind(ListItem item, int position) {
-            String option = item.filterOption;
-            String value = AskanFilter.getInstance().getFilterOption(option);
-            boolean restricted = org.telegram.messenger.askan.AskanFilterLevels.restricts(option, value);
-            labelView.setText(org.telegram.messenger.askan.AskanFilterLevels.optionLabel(option));
-            String hint = org.telegram.messenger.askan.AskanFilterLevels.valueLabel(value);
-            int color = Theme.getColor(restricted ? Theme.key_color_orange : Theme.key_color_green);
-            boolean pending = hasPendingFilterRequest(option);
-            if (pending) {
-                hint += " · ממתין לאישור ⏳";
-            } else if (restricted) {
-                String[] lock = AskanFilter.getInstance().getFilterLock(option);
-                if ("cooldown".equals(lock[0])) {
-                    String d = AskanFilter.shortDate(lock[1]);
-                    if (!d.isEmpty()) hint += " · בקשה אפשרית מ-" + d;
-                } else if ("admin_only".equals(lock[0])) {
-                    hint += " · רק מנהל יכול לפתוח";
-                }
-            }
-            hintView.setText(hint);
-            hintView.setTextColor(color);
-            actionButton.setVisibility(pending ? View.GONE : View.VISIBLE);
-            actionButton.setOnClickListener(v -> showFilterChooser(option));
-            boolean nextIsFilter = (position + 1 < items.size())
-                    && items.get(position + 1).viewType == TYPE_FILTER_OPTION;
-            divider.setVisibility(nextIsFilter ? View.VISIBLE : View.GONE);
-        }
-
-        @Override
-        protected void onMeasure(int w, int h) {
-            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(60), MeasureSpec.EXACTLY));
-        }
-    }
-
-    // ── PrivacyToggleCell ─────────────────────────────────────────────────────
-
-    private class PrivacyToggleCell extends FrameLayout {
-        private final TextView labelView;
-        private final TextView hintView;
-        private final Switch   toggle;
-        private final TextView requestButton;
-        private final View     divider;
-        private CompoundButton.OnCheckedChangeListener activeListener;
-
-        PrivacyToggleCell(Context ctx) {
-            super(ctx);
-            setBackground(cardBg(ctx));
-
-            labelView = new TextView(ctx);
-            labelView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-            labelView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            labelView.setTypeface(Typeface.DEFAULT_BOLD);
-            addView(labelView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP, 16, 14, 140, 0));
-
-            hintView = new TextView(ctx);
-            hintView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            hintView.setTypeface(Typeface.DEFAULT_BOLD);
-            addView(hintView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.BOTTOM, 16, 0, 140, 14));
-
-            toggle = new Switch(ctx);
-            addView(toggle, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 14, 0));
-
-            requestButton = makeOutlineBtn(ctx, "בקש להציג");
-            addView(requestButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 14, 0));
-
-            divider = new View(ctx);
-            divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
-            addView(divider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 0.5f,
-                    Gravity.BOTTOM | Gravity.START, 16, 0, 0, 0));
-        }
-
-        void bind(ListItem item, int position) {
-            labelView.setText(item.isProfilePhotos ? "תמונות פרופיל" : "סטוריז");
-            toggle.setOnCheckedChangeListener(null);
-            toggle.setChecked(item.toggleValue);
-
-            if (item.toggleValue) {
-                toggle.setVisibility(View.VISIBLE);
-                requestButton.setVisibility(View.GONE);
-                toggle.setEnabled(true);
-                hintView.setText("מוצג");
-                hintView.setTextColor(Theme.getColor(Theme.key_color_green));
-
-                activeListener = (btn, isChecked) -> {
-                    if (isChecked) return;
-                    toggle.setOnCheckedChangeListener(null);
-                    toggle.setChecked(true);
-                    toggle.setOnCheckedChangeListener(activeListener);
-                    Context parentCtx = getParentActivity();
-                    if (parentCtx == null) return;
-                    new AlertDialog.Builder(parentCtx)
-                            .setTitle("אזהרה")
-                            .setMessage("לאחר ההסתרה לא תוכל לבטל אלא באישור המנהל. להמשיך?")
-                            .setPositiveButton("המשך", (dialog, which) -> {
-                                toggle.setEnabled(false);
-                                hintView.setText("מסתיר...");
-                                hintView.setTextColor(Theme.getColor(Theme.key_color_orange));
-                                TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-                                if (me == null) { revertToggle(item); return; }
-                                AskanFilter.getInstance().selfHidePrivacy(me.phone,
-                                        UserConfig.getInstance(currentAccount).getClientUserId(),
-                                        item.isProfilePhotos, !item.isProfilePhotos,
-                                        () -> { item.toggleValue = false; if (adapter != null) adapter.notifyItemChanged(position); },
-                                        () -> {
-                                            revertToggle(item);
-                                            Context ctx2 = getParentActivity();
-                                            if (ctx2 != null) new AlertDialog.Builder(ctx2).setMessage("שגיאה בעדכון ההגדרה. נסה שוב.").setPositiveButton("סגור", null).show();
-                                        });
-                            })
-                            .setNegativeButton("ביטול", null).show();
-                };
-                toggle.setOnCheckedChangeListener(activeListener);
-            } else {
-                String targetStr = item.isProfilePhotos ? "profile_photos" : "stories";
-                boolean hasPending = false;
-                for (AskanFilter.RequestInfo r : myRequests) {
-                    if ("privacy".equals(r.kind) && targetStr.equals(r.privacyTarget) && "pending".equals(r.status)) {
-                        hasPending = true; break;
-                    }
-                }
-                toggle.setVisibility(View.GONE);
-                activeListener = null;
-                if (hasPending) {
-                    requestButton.setVisibility(View.GONE);
-                    hintView.setText("ממתין לאישור ⏳");
-                    hintView.setTextColor(Theme.getColor(Theme.key_color_orange));
-                } else {
-                    requestButton.setVisibility(View.VISIBLE);
-                    requestButton.setText("בקש להציג");
-                    requestButton.setAlpha(1f);
-                    requestButton.setEnabled(true);
-                    hintView.setText("מוסתר");
-                    hintView.setTextColor(Theme.getColor(Theme.key_color_orange));
-                    requestButton.setOnClickListener(v -> {
-                        requestButton.setEnabled(false);
-                        requestButton.setText("שולח...");
-                        requestButton.setAlpha(0.6f);
-                        TLRPC.User me = UserConfig.getInstance(currentAccount).getCurrentUser();
-                        if (me == null) { requestButton.setEnabled(true); requestButton.setText("בקש להציג"); requestButton.setAlpha(1f); return; }
-                        AskanFilter.getInstance().sendPrivacyRestoreRequest(me.phone,
-                                UserConfig.getInstance(currentAccount).getClientUserId(), targetStr,
-                                () -> {
-                                    List<AskanFilter.RequestInfo> updated = new ArrayList<>(myRequests);
-                                    updated.add(new AskanFilter.RequestInfo(0, "", "", "pending", "privacy", targetStr));
-                                    myRequests = updated;
-                                    buildItems();
-                                    if (adapter != null) adapter.notifyDataSetChanged();
-                                },
-                                () -> {
-                                    requestButton.setEnabled(true);
-                                    requestButton.setText("בקש להציג");
-                                    requestButton.setAlpha(1f);
-                                    Context parentCtx = getParentActivity();
-                                    if (parentCtx != null) new AlertDialog.Builder(parentCtx).setMessage("שגיאה בשליחת הבקשה. נסה שוב.").setPositiveButton("סגור", null).show();
-                                });
-                    });
-                }
-            }
-            boolean nextIsPrivacy = (position + 1 < items.size())
-                    && items.get(position + 1).viewType == TYPE_PRIVACY_TOGGLE;
-            divider.setVisibility(nextIsPrivacy ? View.VISIBLE : View.GONE);
-        }
-
-        private void revertToggle(ListItem item) {
-            toggle.setOnCheckedChangeListener(null);
-            toggle.setChecked(true);
-            toggle.setEnabled(true);
-            hintView.setText("מוצג");
-            hintView.setTextColor(Theme.getColor(Theme.key_color_green));
-            if (activeListener != null) toggle.setOnCheckedChangeListener(activeListener);
-        }
-
-        @Override
-        protected void onMeasure(int w, int h) {
-            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(64), MeasureSpec.EXACTLY));
-        }
-    }
-
-    // ── ActionCell ────────────────────────────────────────────────────────────
-
-    private class ActionCell extends FrameLayout {
-        private final TextView titleView;
-        private final TextView subtitleView;
-        private final View     divider;
-
-        ActionCell(Context ctx) {
-            super(ctx);
-            setBackground(cardBg(ctx));
-
-            titleView = new TextView(ctx);
-            titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
-            titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            titleView.setTypeface(Typeface.DEFAULT_BOLD);
-            addView(titleView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP, 18, 11, 18, 0));
-
-            subtitleView = new TextView(ctx);
-            subtitleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-            subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            subtitleView.setMaxLines(1);
-            subtitleView.setEllipsize(TextUtils.TruncateAt.END);
-            addView(subtitleView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.BOTTOM, 18, 0, 18, 11));
-
-            divider = new View(ctx);
-            divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
-            addView(divider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 0.5f,
-                    Gravity.BOTTOM | Gravity.START, 18, 0, 0, 0));
-        }
-
-        void bind(ListItem item, int position) {
-            titleView.setText(item.actionTitle);
-            subtitleView.setText(item.actionSubtitle);
-            boolean nextIsAction = (position + 1 < items.size())
-                    && items.get(position + 1).viewType == TYPE_ACTION;
-            divider.setVisibility(nextIsAction ? View.VISIBLE : View.GONE);
-        }
-
-        @Override
-        protected void onMeasure(int w, int h) {
-            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(60), MeasureSpec.EXACTLY));
-        }
-    }
-
-    // ── BlockedChatCell ───────────────────────────────────────────────────────
-
-    private class BlockedChatCell extends FrameLayout {
-        private final BackupImageView avatarImg;
-        private final AvatarDrawable  avatarDrawable;
-        private final TextView        nameView;
-        private final TextView        typeView;
-        private final TextView        requestButton;
-        private final View            divider;
-
-        BlockedChatCell(Context ctx) {
-            super(ctx);
-            setBackground(cardBg(ctx));
-
-            avatarDrawable = new AvatarDrawable();
-            avatarImg = new BackupImageView(ctx);
-            avatarImg.setRoundRadius(dp(21));
-            addView(avatarImg, LayoutHelper.createFrame(42, 42,
-                    Gravity.START | Gravity.CENTER_VERTICAL, 14, 0, 0, 0));
-
-            nameView = new TextView(ctx);
-            nameView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-            nameView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            nameView.setTypeface(Typeface.DEFAULT_BOLD);
-            nameView.setMaxLines(1);
-            nameView.setEllipsize(TextUtils.TruncateAt.END);
-            addView(nameView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.TOP, 68, 11, 110, 0));
-
-            typeView = new TextView(ctx);
-            typeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-            typeView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            addView(typeView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.START | Gravity.BOTTOM, 68, 0, 0, 11));
-
-            requestButton = makeOutlineBtn(ctx, "בקשת גישה");
-            addView(requestButton, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                    Gravity.END | Gravity.CENTER_VERTICAL, 0, 0, 14, 0));
-
-            divider = new View(ctx);
-            divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
-            addView(divider, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 0.5f,
-                    Gravity.BOTTOM | Gravity.START, 68, 0, 0, 0));
-        }
-
-        void bind(ListItem item, int position, boolean showDivider) {
+            String sub;
             if (item.chat != null) {
                 avatarDrawable.setInfo(currentAccount, item.chat);
-                avatarImg.setForUserOrChat(item.chat, avatarDrawable);
-            } else if (item.user != null) {
-                avatarDrawable.setInfo(currentAccount, item.user);
-                avatarImg.setForUserOrChat(item.user, avatarDrawable);
-            }
-
-            nameView.setText(item.displayName());
-            typeView.setText(item.typeLabel() + " · דורש אישור מראש");
-            divider.setVisibility(showDivider ? View.VISIBLE : View.GONE);
-
-            boolean pending = item.requestSent
-                    || AskanUiHelper.isLocallyPending(getContext(), item.resolvedUsername());
-            if (pending) {
-                requestButton.setText("ממתינה ⏳");
-                requestButton.setAlpha(0.5f);
-                requestButton.setEnabled(false);
-                requestButton.setOnClickListener(null);
+                avatar.setForUserOrChat(item.chat, avatarDrawable);
+                name = item.chat.title;
+                boolean group = ChatObject.isMegagroup(item.chat);
+                sub = group ? "קבוצה" : "ערוץ";
+                if (item.chat.participants_count > 0) {
+                    sub += " · " + String.format(java.util.Locale.US, "%,d", item.chat.participants_count)
+                            + (group ? " חברים" : " מנויים");
+                }
             } else {
-                requestButton.setText("בקשת גישה");
-                requestButton.setAlpha(1f);
-                requestButton.setEnabled(true);
-                requestButton.setOnClickListener(v -> {
-                    Context parentCtx = getParentActivity();
-                    if (parentCtx == null) return;
-                    AskanUiHelper.showAccessRequestNoteDialog(parentCtx, currentAccount,
-                            item.resolvedUsername(), item.displayName(), item.typeLabel(),
-                            () -> { item.requestSent = true; if (adapter != null) adapter.notifyItemChanged(position); });
-                });
+                avatarDrawable.setInfo(currentAccount, item.user);
+                avatar.setForUserOrChat(item.user, avatarDrawable);
+                name = item.user.first_name;
+                sub = item.user.bot ? "בוט" : "משתמש";
+            }
+            nameView.setText(name != null ? name : "");
+            String id = item.chat != null
+                    ? (!TextUtils.isEmpty(item.chat.username) ? item.chat.username : String.valueOf(item.chat.id))
+                    : (!TextUtils.isEmpty(item.user.username) ? item.user.username : String.valueOf(item.user.id));
+            if (AskanUiHelper.isLocallyPending(getContext(), id)) {
+                setStatus("ממתינה לאישור", Theme.key_windowBackgroundWhiteGrayText);
+                setButton(null, false);
+            } else {
+                setStatus(sub, Theme.key_windowBackgroundWhiteGrayText);
+                setButton("בקשת גישה", true);
             }
         }
 
-        @Override
-        protected void onMeasure(int w, int h) {
-            super.onMeasure(w, MeasureSpec.makeMeasureSpec(dp(64), MeasureSpec.EXACTLY));
-        }
-    }
+        private void bindRequest(Item item) {
+            String kind = item.queued ? item.queuedKind : item.request.kind;
+            String username = item.queued ? item.queuedUsername : item.request.chatUsername;
+            String chatName = item.queued ? item.queuedName : item.request.chatName;
+            String target = item.queued ? item.queuedTarget : item.request.privacyTarget;
+            boolean filterKind = isFilterKind(kind);
 
-    private class CardGroupDecoration extends RecyclerView.ItemDecoration {
-        @Override
-        public void getItemOffsets(@NonNull Rect out, @NonNull View view,
-                                   @NonNull RecyclerView parent, @NonNull RecyclerView.State state) {
-            int pos = parent.getChildAdapterPosition(view);
-            if (pos < 0 || pos >= items.size()) return;
-            ListItem item = items.get(pos);
-            if (item.viewType == TYPE_SECTION_HEADER) {
-                out.set(0, 0, 0, 0);
+            String name = filterKind ? AskanFilterLevels.optionLabel(target)
+                    : (!TextUtils.isEmpty(chatName) ? chatName : username);
+            nameView.setText(name != null ? name : "");
+
+            // the real avatar when the app already knows the chat, else a coloured letter
+            TLObject known = !filterKind && !TextUtils.isEmpty(username) && !username.matches("-?\\d+")
+                    ? MessagesController.getInstance(currentAccount).getUserOrChat(username) : null;
+            if (known instanceof TLRPC.Chat) {
+                avatarDrawable.setInfo(currentAccount, (TLRPC.Chat) known);
+                avatar.setForUserOrChat(known, avatarDrawable);
+            } else if (known instanceof TLRPC.User) {
+                avatarDrawable.setInfo(currentAccount, (TLRPC.User) known);
+                avatar.setForUserOrChat(known, avatarDrawable);
+            } else {
+                avatarDrawable.setInfo(name != null ? name.hashCode() : 0, name, null);
+                avatar.setImageDrawable(avatarDrawable);
+            }
+
+            if (item.queued) {
+                setStatus("תישלח כשיהיה חיבור", Theme.key_windowBackgroundWhiteGrayText);
+                setButton(null, false);
                 return;
             }
-            boolean isFirst = (pos == 0) || items.get(pos - 1).viewType == TYPE_SECTION_HEADER;
-            boolean isLast  = (pos == items.size() - 1) || items.get(pos + 1).viewType == TYPE_SECTION_HEADER;
-            out.left  = dp(14);
-            out.right = dp(14);
-            out.top    = isFirst ? 0 : 0;
-            out.bottom = isLast  ? dp(2) : 0;
+            AskanFilter.RequestInfo r = item.request;
+            String when = r.reviewedAt > 0 ? AskanUiHelper.sentWhen(r.reviewedAt)
+                    : (r.createdAt > 0 ? AskanUiHelper.sentWhen(r.createdAt) : null);
+            String sentWhen = r.createdAt > 0 ? AskanUiHelper.sentWhen(r.createdAt) : null;
+            switch (r.status) {
+                case "pending":
+                    setStatus(sentWhen != null ? "ממתינה · נשלחה " + sentWhen : "ממתינה לאישור",
+                            Theme.key_windowBackgroundWhiteGrayText);
+                    setButton(null, false);
+                    break;
+                case "approved":
+                    setStatus(when != null ? "אושרה · " + when : "אושרה", Theme.key_windowBackgroundWhiteBlueText);
+                    setButton(filterKind ? "הבנתי" : "פתיחה", true);
+                    break;
+                case "blocked":
+                    setStatus("לא אושרה", Theme.key_text_RedRegular);
+                    setButton("הבנתי", false);
+                    break;
+                default:
+                    setStatus(AskanFilter.rejectReasonText(r.rejectReason) != null ? "לא אושרה · למה?" : "לא אושרה",
+                            Theme.key_text_RedRegular);
+                    setButton("בקשה חוזרת", false);
+                    break;
+            }
+        }
+
+        private void setStatus(String text, int colorKey) {
+            statusView.setText(text);
+            statusView.setTextColor(Theme.getColor(colorKey));
+        }
+
+        /** primary = Telegram's filled "Add" pill; otherwise a quiet text button. */
+        private void setButton(String text, boolean primary) {
+            if (text == null) {
+                button.setVisibility(View.GONE);
+                return;
+            }
+            button.setVisibility(View.VISIBLE);
+            button.setText(text);
+            if (primary) {
+                button.setTextColor(Theme.getColor(Theme.key_featuredStickers_buttonText));
+                button.setBackground(Theme.AdaptiveRipple.filledRectByKey(Theme.key_featuredStickers_addButton, 14));
+            } else {
+                button.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4));
+                button.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), Theme.RIPPLE_MASK_ROUNDRECT_6DP));
+            }
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(dp(64) + (needDivider ? 1 : 0), MeasureSpec.EXACTLY));
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            if (needDivider) {
+                float start = dp(72);
+                if (getLayoutDirection() == LAYOUT_DIRECTION_RTL || org.telegram.messenger.LocaleController.isRTL) {
+                    canvas.drawLine(0, getMeasuredHeight() - 1, getMeasuredWidth() - start, getMeasuredHeight() - 1, Theme.dividerPaint);
+                } else {
+                    canvas.drawLine(start, getMeasuredHeight() - 1, getMeasuredWidth(), getMeasuredHeight() - 1, Theme.dividerPaint);
+                }
+            }
         }
     }
 }

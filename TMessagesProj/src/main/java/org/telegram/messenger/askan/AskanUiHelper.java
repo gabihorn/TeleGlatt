@@ -80,14 +80,25 @@ public class AskanUiHelper {
      * (opening a blocked chat) and LaunchActivity (opening a blocked link),
      * so the design and wording stay identical everywhere.
      */
+    // ─── Blocked chat sheet ───────────────────────────────────────────────────
+    //
+    // Three states, one quiet layout in the spirit of Telegram's own sheets:
+    //   NEW      — not approved yet: reason chips + optional note + "request access"
+    //   PENDING  — already asked: when, and what was written; no way to ask again
+    //   BLOCKED  — the team blocked it: one plain sentence, no request button
+    // A small badge on the avatar (lock / clock / x) carries the state.
+
+    private static final String[] REQUEST_REASONS = {"לימודים", "עבודה", "משפחה", "חדשות", "אחר"};
+    private static final int BADGE_LOCK = 0, BADGE_CLOCK = 1, BADGE_X = 2;
+
     public static void showBlockedSheet(Context ctx, int account, TLRPC.Chat chat, TLRPC.User user) {
         if (ctx == null) return;
 
         String name = chat != null ? chat.title
                 : (user != null && user.first_name != null ? user.first_name : "");
         boolean isBot = user != null && user.bot;
-        String subject = isBot ? "בוט"
-                : (chat != null && ChatObject.isMegagroup(chat) ? "קבוצה" : "ערוץ");
+        boolean isGroup = chat != null && ChatObject.isMegagroup(chat);
+        String subject = isBot ? "בוט" : (isGroup ? "קבוצה" : "ערוץ");
 
         final String identifier;
         if (chat != null) {
@@ -101,14 +112,27 @@ public class AskanUiHelper {
         }
         final String chatName = name.isEmpty() ? subject : name;
 
+        TLRPC.ChatFull chatFull = chat != null
+                ? org.telegram.messenger.MessagesController.getInstance(account).getChatFull(chat.id) : null;
+        AskanFilter.BlockReason reason = (chat != null)
+                ? AskanFilter.getInstance().getChatBlockReason(chat, chatFull)
+                : AskanFilter.getInstance().getUserBlockReason(user);
+        // Explicitly blocked (by the team, for everyone / the company / this user): the
+        // server answers any request with "blocked", so don't offer one.
+        final boolean explicitlyBlocked = reason == AskanFilter.BlockReason.EXPLICIT;
+        final boolean pending = !explicitlyBlocked && isLocallyPending(ctx, identifier);
+
+        int textColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText);
+        int grayColor = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText);
+
         LinearLayout content = new LinearLayout(ctx);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setGravity(Gravity.CENTER_HORIZONTAL);
-        content.setPadding(dp(24), dp(8), dp(24), dp(20));
+        content.setPadding(0, dp(16), 0, dp(12));
 
-        // Avatar
+        // ── Avatar with state badge ──
+        FrameLayout avatarFrame = new FrameLayout(ctx);
         BackupImageView avatarView = new BackupImageView(ctx);
-        avatarView.setRoundRadius(dp(32));
+        avatarView.setRoundRadius(dp(40));
         AvatarDrawable avatarDrawable = new AvatarDrawable();
         if (chat != null) {
             avatarDrawable.setInfo(account, chat);
@@ -117,139 +141,328 @@ public class AskanUiHelper {
             avatarDrawable.setInfo(account, user);
             avatarView.setForUserOrChat(user, avatarDrawable);
         }
-        content.addView(avatarView, new LinearLayout.LayoutParams(dp(64), dp(64)));
+        if (explicitlyBlocked) avatarView.setAlpha(0.6f);
+        avatarFrame.addView(avatarView, new FrameLayout.LayoutParams(dp(80), dp(80)));
+        int badgeColor = explicitlyBlocked ? 0xFF8A8F98 : (pending ? 0xFFFBB244 : BRAND_NAVY);
+        int badgeKind = explicitlyBlocked ? BADGE_X : (pending ? BADGE_CLOCK : BADGE_LOCK);
+        StateBadge badge = new StateBadge(ctx, badgeKind, badgeColor,
+                Theme.getColor(Theme.key_dialogBackground));
+        FrameLayout.LayoutParams badgeLp = new FrameLayout.LayoutParams(dp(28), dp(28));
+        badgeLp.gravity = Gravity.BOTTOM | Gravity.LEFT;
+        avatarFrame.addView(badge, badgeLp);
+        LinearLayout.LayoutParams frameLp = new LinearLayout.LayoutParams(dp(80), dp(80));
+        frameLp.gravity = Gravity.CENTER_HORIZONTAL;
+        content.addView(avatarFrame, frameLp);
 
-        // Title
+        // ── Title ──
         TextView titleView = new TextView(ctx);
         titleView.setText(chatName);
-        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+        titleView.setTypeface(org.telegram.messenger.AndroidUtilities.bold());
+        titleView.setTextColor(textColor);
         titleView.setGravity(Gravity.CENTER);
         titleView.setMaxLines(1);
         titleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        titleLp.topMargin = dp(12);
-        content.addView(titleView, titleLp);
+        titleView.setPadding(dp(24), 0, dp(24), 0);
+        content.addView(titleView, matchWrap(12));
 
-        // Subtitle
-        TextView subtitleView = new TextView(ctx);
-        subtitleView.setText(subject + " זה דורש אישור מראש");
-        subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        subtitleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-        subtitleView.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        subLp.topMargin = dp(6);
-        content.addView(subtitleView, subLp);
-
-        // Reason line — explains WHY this is blocked (mirrors the actual filter decision)
-        AskanFilter.BlockReason reason = (chat != null)
-                ? AskanFilter.getInstance().getChatBlockReason(chat,
-                        org.telegram.messenger.MessagesController.getInstance(account).getChatFull(chat.id))
-                : AskanFilter.getInstance().getUserBlockReason(user);
-        String reasonText = null;
-        if (reason == AskanFilter.BlockReason.EXPLICIT) {
-            reasonText = "הסיבה: " + subject + " זה נחסם על ידי הסינון";
-        } else if (reason == AskanFilter.BlockReason.NOT_APPROVED) {
-            reasonText = "הסיבה: " + (isBot ? "בוט זה אינו" : subject + " זה אינו") + " ברשימת המאושרים";
-        }
-        if (reasonText != null) {
-            TextView reasonView = new TextView(ctx);
-            reasonView.setText(reasonText);
-            reasonView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-            reasonView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-            reasonView.setGravity(Gravity.CENTER);
-            LinearLayout.LayoutParams reasonLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            reasonLp.topMargin = dp(4);
-            content.addView(reasonView, reasonLp);
-        }
-
-        // Info box
-        LinearLayout infoBox = new LinearLayout(ctx);
-        infoBox.setOrientation(LinearLayout.HORIZONTAL);
-        infoBox.setGravity(Gravity.CENTER_VERTICAL);
-        GradientDrawable infoBg = new GradientDrawable();
-        infoBg.setColor(Theme.getColor(Theme.key_windowBackgroundGray));
-        infoBg.setCornerRadius(dp(10));
-        infoBox.setBackground(infoBg);
-        infoBox.setPadding(dp(12), dp(10), dp(12), dp(10));
-        LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        infoLp.topMargin = dp(16);
-
-        TextView infoIcon = new TextView(ctx);
-        infoIcon.setText("🔒");
-        infoIcon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        infoBox.addView(infoIcon, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        View iconSpacer = new View(ctx);
-        infoBox.addView(iconSpacer, new LinearLayout.LayoutParams(dp(8), 1));
-        TextView infoText = new TextView(ctx);
-        // Explicitly blocked (by the team, for everyone / the company / this user): the
-        // server answers any request with "blocked", so don't offer one.
-        final boolean explicitlyBlocked = reason == AskanFilter.BlockReason.EXPLICIT;
-        infoText.setText(explicitlyBlocked
-                ? "צוות הסינון בדק וחסם את זה, ולכן אי אפשר לבקש גישה."
-                : "ניתן להגיש בקשת גישה. הבקשה תיבדק על ידי הצוות ותטופל בהקדם.");
-        infoText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        infoText.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-        infoText.setLineSpacing(dp(2), 1f);
-        infoBox.addView(infoText, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        content.addView(infoBox, infoLp);
-
-        // Request button
-        final boolean alreadyPending = isLocallyPending(ctx, identifier);
-        TextView requestBtn = new TextView(ctx);
-        requestBtn.setText(alreadyPending ? "בקשה ממתינה לאישור ⏳" : "בקשת גישה");
-        requestBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        requestBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        requestBtn.setGravity(Gravity.CENTER);
-        requestBtn.setPadding(0, dp(14), 0, dp(14));
-        GradientDrawable btnBg = new GradientDrawable();
-        btnBg.setCornerRadius(dp(12));
-        if (alreadyPending) {
-            int orange = Theme.getColor(Theme.key_color_orange);
-            requestBtn.setTextColor(orange);
-            btnBg.setColor((orange & 0x00FFFFFF) | 0x1F000000);
-            btnBg.setStroke(dp(1), (orange & 0x00FFFFFF) | 0x55000000);
+        // ── Subtitle: what it is (+ members), or the state with a small dot ──
+        TextView subView = new TextView(ctx);
+        subView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        subView.setTextColor(grayColor);
+        subView.setGravity(Gravity.CENTER);
+        if (explicitlyBlocked || pending) {
+            android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder("  ");
+            sb.setSpan(new DotSpan(explicitlyBlocked ? 0xFFC0392B : 0xFFFBB244), 0, 1, 0);
+            sb.append(explicitlyBlocked ? "לא אושר" : "ממתין לאישור");
+            subView.setText(sb);
         } else {
-            requestBtn.setTextColor(Color.WHITE);
-            btnBg.setColor(BRAND_NAVY);
+            subView.setText(subjectLine(subject, isGroup, isBot, chat, chatFull));
         }
-        requestBtn.setBackground(btnBg);
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        btnLp.topMargin = dp(16);
-        if (!explicitlyBlocked) content.addView(requestBtn, btnLp);
+        content.addView(subView, matchWrap(4));
 
-        // Close link
-        TextView closeBtn = new TextView(ctx);
-        closeBtn.setText("סגור");
-        closeBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        closeBtn.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
-        closeBtn.setGravity(Gravity.CENTER);
-        closeBtn.setPadding(0, dp(12), 0, dp(4));
-        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        closeLp.topMargin = dp(4);
-        content.addView(closeBtn, closeLp);
+        BottomSheet[] sheetRef = new BottomSheet[1];
+
+        if (explicitlyBlocked) {
+            content.addView(bodyText(ctx, "צוות הסינון בדק את ה" + subject + " הזה ולא אישר אותו, ולכן אי אפשר לבקש אותו שוב.",
+                    textColor), matchWrap(14));
+            content.addView(divider(ctx), dividerLp(18));
+            content.addView(flatButton(ctx, "הבקשות שלי", BRAND_NAVY_TEXT(), v -> {
+                if (sheetRef[0] != null) sheetRef[0].dismiss();
+                openMyRequests();
+            }), matchWrap(4));
+            content.addView(flatButton(ctx, "סגירה", grayColor, v -> {
+                if (sheetRef[0] != null) sheetRef[0].dismiss();
+            }), matchWrap(0));
+        } else if (pending) {
+            content.addView(divider(ctx), dividerLp(18));
+            long sentAt = AskanFilter.reqStatusPrefs(ctx).getLong("pending_at_" + identifier, 0);
+            content.addView(infoRow(ctx, sentAt > 0 ? "נשלחה " + sentWhen(sentAt) : "הבקשה נשלחה",
+                    "נעדכן אותך כשתהיה תשובה", textColor, grayColor), matchWrap(0));
+            String sentNote = AskanFilter.reqStatusPrefs(ctx).getString("pending_note_" + identifier, "");
+            if (sentNote != null && !sentNote.isEmpty()) {
+                content.addView(infoRow(ctx, sentNote, "מה שכתבת בבקשה", textColor, grayColor), matchWrap(0));
+            }
+            content.addView(divider(ctx), dividerLp(10));
+            content.addView(flatButton(ctx, "הבקשות שלי", BRAND_NAVY_TEXT(), v -> {
+                if (sheetRef[0] != null) sheetRef[0].dismiss();
+                openMyRequests();
+            }), matchWrap(4));
+        } else {
+            content.addView(bodyText(ctx, "ה" + subject + " הזה עדיין לא נבדק על ידי הסינון.", textColor),
+                    matchWrap(14));
+            content.addView(divider(ctx), dividerLp(18));
+
+            TextView askLabel = new TextView(ctx);
+            askLabel.setText("בשביל מה?");
+            askLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            askLabel.setTypeface(org.telegram.messenger.AndroidUtilities.bold());
+            askLabel.setTextColor(BRAND_NAVY_TEXT());
+            askLabel.setPadding(dp(20), 0, dp(20), 0);
+            content.addView(askLabel, matchWrap(14));
+
+            // reason chips — one may be selected; tapping it again clears it
+            final String[] chosen = {null};
+            android.widget.HorizontalScrollView chipScroll = new android.widget.HorizontalScrollView(ctx);
+            chipScroll.setHorizontalScrollBarEnabled(false);
+            LinearLayout chips = new LinearLayout(ctx);
+            chips.setOrientation(LinearLayout.HORIZONTAL);
+            chips.setPadding(dp(20), 0, dp(20), 0);
+            TextView[] chipViews = new TextView[REQUEST_REASONS.length];
+            for (int i = 0; i < REQUEST_REASONS.length; i++) {
+                final String r = REQUEST_REASONS[i];
+                TextView c = new TextView(ctx);
+                c.setText(r);
+                c.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                c.setPadding(dp(12), dp(6), dp(12), dp(6));
+                chipViews[i] = c;
+                LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                clp.leftMargin = dp(6);
+                chips.addView(c, clp);
+                c.setOnClickListener(v -> {
+                    chosen[0] = r.equals(chosen[0]) ? null : r;
+                    styleChips(chipViews, chosen[0]);
+                });
+            }
+            styleChips(chipViews, null);
+            chipScroll.addView(chips);
+            content.addView(chipScroll, matchWrap(8));
+
+            EditText noteInput = new EditText(ctx);
+            noteInput.setHint("הסבר קצר (לא חובה)");
+            noteInput.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText));
+            noteInput.setTextColor(textColor);
+            noteInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            noteInput.setMaxLines(3);
+            noteInput.setBackground(Theme.createEditTextDrawable(ctx, false));
+            noteInput.setPadding(0, dp(6), 0, dp(10));
+            LinearLayout.LayoutParams noteLp = matchWrap(10);
+            noteLp.leftMargin = dp(20);
+            noteLp.rightMargin = dp(20);
+            content.addView(noteInput, noteLp);
+
+            TextView sendBtn = new TextView(ctx);
+            sendBtn.setText("בקשת גישה");
+            sendBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            sendBtn.setTypeface(org.telegram.messenger.AndroidUtilities.bold());
+            sendBtn.setTextColor(Color.WHITE);
+            sendBtn.setGravity(Gravity.CENTER);
+            sendBtn.setPadding(0, dp(13), 0, dp(13));
+            GradientDrawable btnBg = new GradientDrawable();
+            btnBg.setCornerRadius(dp(8));
+            btnBg.setColor(BRAND_NAVY);
+            sendBtn.setBackground(btnBg);
+            LinearLayout.LayoutParams btnLp = matchWrap(18);
+            btnLp.leftMargin = dp(16);
+            btnLp.rightMargin = dp(16);
+            content.addView(sendBtn, btnLp);
+
+            sendBtn.setOnClickListener(v -> {
+                String typed = noteInput.getText().toString().trim();
+                String note = chosen[0] == null ? typed
+                        : (typed.isEmpty() ? chosen[0] : chosen[0] + " · " + typed);
+                submitRequest(ctx, account, identifier, chatName, subject, note, sendBtn, "בקשת גישה",
+                        () -> { if (sheetRef[0] != null) sheetRef[0].dismiss(); }, null);
+            });
+        }
 
         BottomSheet sheet = new BottomSheet.Builder(ctx, false)
                 .setCustomView(content)
                 .create();
+        sheetRef[0] = sheet;
+        if (!explicitlyBlocked && !pending) sheet.setFocusable(true); // note field needs the keyboard
         sheet.show();
+    }
 
-        requestBtn.setOnClickListener(v -> {
-            sheet.dismiss();
-            if (!alreadyPending) {
-                showAccessRequestNoteDialog(ctx, account, identifier, chatName, subject, null);
+    private static int BRAND_NAVY_TEXT() {
+        // navy reads poorly on a dark theme; fall back to the theme's link colour there
+        return Theme.isCurrentThemeDark() ? Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4) : BRAND_NAVY;
+    }
+
+    private static String subjectLine(String subject, boolean isGroup, boolean isBot,
+                                      TLRPC.Chat chat, TLRPC.ChatFull chatFull) {
+        if (isBot || chat == null) return subject;
+        int count = chatFull != null && chatFull.participants_count > 0
+                ? chatFull.participants_count : chat.participants_count;
+        if (count <= 0) return subject;
+        return subject + " · " + String.format(java.util.Locale.US, "%,d", count)
+                + (isGroup ? " חברים" : " מנויים");
+    }
+
+    /** "היום ב־14:05" / "אתמול ב־09:30" / "ב־5.11 ב־18:20" */
+    public static String sentWhen(long at) {
+        java.util.Calendar now = java.util.Calendar.getInstance();
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.setTimeInMillis(at);
+        String hm = String.format(java.util.Locale.US, "%02d:%02d",
+                c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
+        int dayDiff = (now.get(java.util.Calendar.YEAR) - c.get(java.util.Calendar.YEAR)) * 366
+                + now.get(java.util.Calendar.DAY_OF_YEAR) - c.get(java.util.Calendar.DAY_OF_YEAR);
+        if (dayDiff == 0) return "היום ב־" + hm;
+        if (dayDiff == 1) return "אתמול ב־" + hm;
+        return "ב־" + c.get(java.util.Calendar.DAY_OF_MONTH) + "." + (c.get(java.util.Calendar.MONTH) + 1)
+                + " ב־" + hm;
+    }
+
+    private static void openMyRequests() {
+        org.telegram.ui.ActionBar.BaseFragment f = org.telegram.ui.LaunchActivity.getSafeLastFragment();
+        if (f != null) f.presentFragment(new org.telegram.ui.AskanBlockedChatsActivity());
+    }
+
+    private static void styleChips(TextView[] chips, String chosen) {
+        int on = BRAND_NAVY;
+        int offBg = Theme.getColor(Theme.key_windowBackgroundGray);
+        int offText = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText);
+        for (TextView c : chips) {
+            boolean sel = c.getText().toString().equals(chosen);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(14));
+            bg.setColor(sel ? on : offBg);
+            c.setBackground(bg);
+            c.setTextColor(sel ? Color.WHITE : offText);
+        }
+    }
+
+    private static LinearLayout.LayoutParams matchWrap(int topMarginDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(topMarginDp);
+        return lp;
+    }
+
+    private static View divider(Context ctx) {
+        View d = new View(ctx);
+        d.setBackgroundColor(Theme.getColor(Theme.key_divider));
+        return d;
+    }
+
+    private static LinearLayout.LayoutParams dividerLp(int topMarginDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1);
+        lp.topMargin = dp(topMarginDp);
+        return lp;
+    }
+
+    private static TextView bodyText(Context ctx, String text, int color) {
+        TextView t = new TextView(ctx);
+        t.setText(text);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        t.setTextColor(color);
+        t.setGravity(Gravity.CENTER);
+        t.setLineSpacing(dp(2), 1f);
+        t.setPadding(dp(24), 0, dp(24), 0);
+        return t;
+    }
+
+    private static View infoRow(Context ctx, String main, String sub, int textColor, int grayColor) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(20), dp(12), dp(20), dp(4));
+        TextView m = new TextView(ctx);
+        m.setText(main);
+        m.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        m.setTextColor(textColor);
+        m.setMaxLines(3);
+        m.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.addView(m);
+        TextView s = new TextView(ctx);
+        s.setText(sub);
+        s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        s.setTextColor(grayColor);
+        row.addView(s);
+        return row;
+    }
+
+    private static TextView flatButton(Context ctx, String text, int color, View.OnClickListener l) {
+        TextView b = new TextView(ctx);
+        b.setText(text);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        b.setTypeface(org.telegram.messenger.AndroidUtilities.bold());
+        b.setTextColor(color);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(0, dp(12), 0, dp(12));
+        b.setBackground(Theme.getSelectorDrawable(false));
+        b.setOnClickListener(l);
+        return b;
+    }
+
+    /** Small coloured dot in front of a status line. */
+    private static class DotSpan extends android.text.style.ReplacementSpan {
+        private final int color;
+        DotSpan(int color) { this.color = color; }
+        @Override public int getSize(android.graphics.Paint p, CharSequence t, int s, int e,
+                                     android.graphics.Paint.FontMetricsInt fm) { return dp(9); }
+        @Override public void draw(android.graphics.Canvas c, CharSequence t, int s, int e, float x,
+                                   int top, int y, int bottom, android.graphics.Paint p) {
+            int old = p.getColor();
+            p.setColor(color);
+            float cy = (top + bottom) / 2f;
+            c.drawCircle(x + dp(3.5f), cy, dp(3.5f), p);
+            p.setColor(old);
+        }
+    }
+
+    /** Round badge drawn over the avatar corner: lock, clock or x. */
+    private static class StateBadge extends View {
+        private final int kind, color, ring;
+        private final android.graphics.Paint fill = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Paint stroke = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.RectF rect = new android.graphics.RectF();
+
+        StateBadge(Context ctx, int kind, int color, int ring) {
+            super(ctx);
+            this.kind = kind; this.color = color; this.ring = ring;
+            stroke.setStyle(android.graphics.Paint.Style.STROKE);
+            stroke.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            stroke.setStrokeJoin(android.graphics.Paint.Join.ROUND);
+            stroke.setColor(Color.WHITE);
+            stroke.setStrokeWidth(dp(1.8f));
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas c) {
+            float w = getWidth(), cx = w / 2f, cy = getHeight() / 2f, r = w / 2f;
+            fill.setColor(ring);
+            c.drawCircle(cx, cy, r, fill);
+            fill.setColor(color);
+            c.drawCircle(cx, cy, r - dp(2.5f), fill);
+            float u = dp(1); // icon drawn on a ~12dp grid around the centre
+            if (kind == BADGE_LOCK) {
+                fill.setColor(Color.WHITE);
+                rect.set(cx - 4.5f * u, cy - 1 * u, cx + 4.5f * u, cy + 5 * u);
+                c.drawRoundRect(rect, 1.5f * u, 1.5f * u, fill);
+                rect.set(cx - 3 * u, cy - 6 * u, cx + 3 * u, cy + 1 * u);
+                c.drawArc(rect, 180, 180, false, stroke);
+                c.drawLine(cx - 3 * u, cy - 2.5f * u, cx - 3 * u, cy - 1 * u, stroke);
+                c.drawLine(cx + 3 * u, cy - 2.5f * u, cx + 3 * u, cy - 1 * u, stroke);
+            } else if (kind == BADGE_CLOCK) {
+                c.drawCircle(cx, cy, 5 * u, stroke);
+                c.drawLine(cx, cy - 3 * u, cx, cy, stroke);
+                c.drawLine(cx, cy, cx + 2.2f * u, cy + 1.4f * u, stroke);
+            } else {
+                c.drawLine(cx - 3.5f * u, cy - 3.5f * u, cx + 3.5f * u, cy + 3.5f * u, stroke);
+                c.drawLine(cx + 3.5f * u, cy - 3.5f * u, cx - 3.5f * u, cy + 3.5f * u, stroke);
             }
-        });
-        closeBtn.setOnClickListener(v -> sheet.dismiss());
+        }
     }
 
     /**
@@ -356,7 +569,17 @@ public class AskanUiHelper {
         }, 150);
 
         cancelBtn.setOnClickListener(v -> sheet.dismiss());
-        sendBtn.setOnClickListener(v -> {
+        sendBtn.setOnClickListener(v -> submitRequest(ctx, account, chatUsername, chatName, subject,
+                noteInput.getText().toString().trim(), sendBtn, "שלח בקשה", sheet::dismiss, onSent));
+    }
+
+    /**
+     * Sends an access request and reports the outcome. Shared by the blocked sheet and
+     * the note dialog; {@code dismiss} closes whichever sheet asked.
+     */
+    private static void submitRequest(Context ctx, int account, String chatUsername, String chatName,
+                                      String subject, String note, TextView sendBtn, String btnText,
+                                      Runnable dismiss, Runnable onSent) {
             TLRPC.User selfUser = UserConfig.getInstance(account).getCurrentUser();
             String phone = selfUser != null ? selfUser.phone : null;
             if (phone == null || phone.isEmpty()) {
@@ -372,22 +595,21 @@ public class AskanUiHelper {
             sendBtn.setEnabled(false);
             sendBtn.setAlpha(0.7f);
 
-            String note = noteInput.getText().toString().trim();
             AskanFilter.getInstance().sendAccessRequest(
                     phone, chatUsername, chatName, note,
                     (status, serverMessage) -> {
                         String msg;
                         switch (status) {
                             case "pending":
-                                markPending(ctx, chatUsername);
+                                markPending(ctx, chatUsername, note);
                                 Toast.makeText(ctx, "בקשתך נשלחה ותיבדק על ידי הצוות בהקדם", Toast.LENGTH_LONG).show();
-                                sheet.dismiss();
+                                dismiss.run();
                                 if (onSent != null) onSent.run();
                                 return;
                             case "queued":
-                                markPending(ctx, chatUsername);
+                                markPending(ctx, chatUsername, note);
                                 Toast.makeText(ctx, "אין חיבור לשרת כרגע. הבקשה נשמרה ותישלח אוטומטית", Toast.LENGTH_LONG).show();
-                                sheet.dismiss();
+                                dismiss.run();
                                 if (onSent != null) onSent.run();
                                 return;
                             case "rate_limited":
@@ -400,13 +622,13 @@ public class AskanUiHelper {
                                 AskanFilter.getInstance().fetchPermissions(phone,
                                         UserConfig.getInstance(account).getClientUserId());
                                 Toast.makeText(ctx, "הגישה כבר מאושרת. ההרשאות מתעדכנות, נסה לפתוח שוב בעוד רגע", Toast.LENGTH_LONG).show();
-                                sheet.dismiss();
+                                dismiss.run();
                                 return;
                             }
                             case "already_pending":
-                                markPending(ctx, chatUsername);
+                                markPending(ctx, chatUsername, note);
                                 Toast.makeText(ctx, "בקשה קיימת כבר ממתינה לאישור", Toast.LENGTH_LONG).show();
-                                sheet.dismiss();
+                                dismiss.run();
                                 if (onSent != null) onSent.run();
                                 return;
                             case "globally_blocked":
@@ -427,19 +649,24 @@ public class AskanUiHelper {
                             msg = serverMessage;
                         }
                         Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
-                        sendBtn.setText("שלח בקשה");
+                        sendBtn.setText(btnText);
                         sendBtn.setEnabled(true);
                         sendBtn.setAlpha(1f);
                     }
             );
-        });
     }
 
     /** Persists a local "request pending" flag so the blocked dialog can reflect it on reopen. */
-    private static void markPending(Context ctx, String chatUsername) {
+    private static void markPending(Context ctx, String chatUsername, String note) {
         if (chatUsername == null || chatUsername.isEmpty()) return;
-        AskanFilter.reqStatusPrefs(ctx)
-           .edit().putBoolean("pending_" + chatUsername, true).apply();
+        SharedPreferences.Editor e = AskanFilter.reqStatusPrefs(ctx).edit()
+                .putBoolean("pending_" + chatUsername, true);
+        // when and what was asked — shown on the sheet while the request waits
+        if (!AskanFilter.reqStatusPrefs(ctx).getBoolean("pending_" + chatUsername, false)) {
+            e.putLong("pending_at_" + chatUsername, System.currentTimeMillis());
+            e.putString("pending_note_" + chatUsername, note != null ? note : "");
+        }
+        e.apply();
     }
 
     /** True if a request for this chat is locally marked as pending (cleared on approve/reject). */
@@ -454,7 +681,8 @@ public class AskanUiHelper {
         // would otherwise stick forever and keep showing "under review" on a chat the
         // user can already open. Drop it here instead of trusting the transition.
         if (AskanFilter.getInstance().isExplicitlyAllowed(chatUsername, chatUsername)) {
-            AskanFilter.reqStatusPrefs(ctx).edit().remove("pending_" + chatUsername).apply();
+            AskanFilter.reqStatusPrefs(ctx).edit().remove("pending_" + chatUsername)
+                    .remove("pending_at_" + chatUsername).remove("pending_note_" + chatUsername).apply();
             return false;
         }
         return true;

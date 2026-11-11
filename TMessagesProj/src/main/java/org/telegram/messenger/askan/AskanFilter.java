@@ -1487,6 +1487,8 @@ public class AskanFilter {
         public final String privacyTarget;
         /** Why it was turned down: admin's free text, "blocked_word", or null. */
         public String rejectReason;
+        /** When it was sent / decided, epoch ms; 0 when the server did not say. */
+        public long createdAt, reviewedAt;
 
         public RequestInfo(int id, String chatUsername, String chatName, String status,
                            String kind, String privacyTarget) {
@@ -1496,6 +1498,20 @@ public class AskanFilter {
             this.status = status;
             this.kind = kind;
             this.privacyTarget = privacyTarget;
+        }
+    }
+
+    /** "2026-11-08T15:55:02Z" (optionally with millis) → epoch ms, 0 if absent/unparseable. */
+    public static long parseServerTime(String iso) {
+        if (iso == null || iso.isEmpty() || "null".equals(iso)) return 0;
+        try {
+            String t = iso.replaceAll("\\.\\d+", "").replace("Z", "");
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US);
+            f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            java.util.Date d = f.parse(t);
+            return d != null ? d.getTime() : 0;
+        } catch (Exception e) {
+            return 0;
         }
     }
 
@@ -1549,6 +1565,8 @@ public class AskanFilter {
                             obj.optString("kind", "access"),
                             privTarget);
                     ri.rejectReason = obj.isNull("reject_reason") ? null : obj.optString("reject_reason", null);
+                    ri.createdAt = parseServerTime(obj.optString("created_at", null));
+                    ri.reviewedAt = parseServerTime(obj.optString("reviewed_at", null));
                     list.add(ri);
                 }
                 AndroidUtilities.runOnUIThread(() -> { if (callback != null) callback.onResult(list); });
@@ -1749,6 +1767,8 @@ public class AskanFilter {
                 // Clear local "pending" flag once the request is no longer pending
                 if (!"pending".equals(req.status) && req.chatUsername != null && !req.chatUsername.isEmpty()) {
                     editor.remove("pending_" + req.chatUsername);
+                    editor.remove("pending_at_" + req.chatUsername);
+                    editor.remove("pending_note_" + req.chatUsername);
                 }
                 editor.putString(key, req.status);
             }
