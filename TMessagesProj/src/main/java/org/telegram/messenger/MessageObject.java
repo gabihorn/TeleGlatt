@@ -6320,7 +6320,8 @@ public class MessageObject {
                 } else if (getMedia(messageOwner) instanceof TLRPC.TL_messageMediaUnsupported) {
                     messageText = getString(R.string.UnsupportedMedia2);
                 } else if (getMedia(messageOwner) instanceof TLRPC.TL_messageMediaWidget) {
-                    messageText = TextUtils.isEmpty(messageOwner.message) ? getString(R.string.AttachWidget) : messageOwner.message;
+                    messageText = askanWidgetBlocked() ? askanWidgetBlockedText()
+                            : TextUtils.isEmpty(messageOwner.message) ? getString(R.string.AttachWidget) : messageOwner.message;
                 } else if (getMedia(messageOwner) instanceof TLRPC.TL_messageMediaDocument) {
                     if (isSticker() || isAnimatedStickerDocument(getDocument(), true)) {
                         String sch = getStickerChar();
@@ -6901,6 +6902,8 @@ public class MessageObject {
                 contentType = 10;
                 type = TYPE_UNSUPPORTED;
             } else if (isRestrictedMessage) {
+                type = TYPE_TEXT;
+            } else if (getMedia(messageOwner) instanceof TLRPC.TL_messageMediaWidget && askanWidgetBlocked()) {
                 type = TYPE_TEXT;
             } else if (messageOwner.rich_message != null || getMedia(messageOwner) instanceof TLRPC.TL_messageMediaWidget) {
                 type = TYPE_ARTICLE;
@@ -8968,6 +8971,44 @@ public class MessageObject {
         }
     }
 
+    // Askan: a bot widget runs the bot's own code inside the chat (draws images, opens links, queries the
+    // bot) - the same hole as a mini app. Shown only for an allowed bot and when the filter level lets
+    // mini apps through; otherwise the message is plain text and the widget engine never starts.
+    private Boolean askanWidgetBlocked;
+
+    public boolean askanWidgetBlocked() {
+        if (!(getMedia(messageOwner) instanceof TLRPC.TL_messageMediaWidget)) return false;
+        if (askanWidgetBlocked == null) {
+            boolean blocked;
+            try {
+                org.telegram.messenger.askan.AskanFilter filter = org.telegram.messenger.askan.AskanFilter.getInstance();
+                long bot = messageOwner.via_bot_id;
+                if (bot == 0 && messageOwner.fwd_from != null) {
+                    bot = messageOwner.fwd_from.from_id instanceof TLRPC.TL_peerUser ? messageOwner.fwd_from.from_id.user_id : 0;
+                } else if (bot == 0) {
+                    long from = getFromChatId();
+                    bot = from > 0 ? from : 0;
+                }
+                if ("block".equals(filter.getFilterOption(org.telegram.messenger.askan.AskanFilterLevels.MINI_APPS)) || bot == 0) {
+                    blocked = true;
+                } else {
+                    TLRPC.TL_inputUser input = new TLRPC.TL_inputUser();
+                    input.user_id = bot;
+                    blocked = !filter.isInlineBotAllowed(input);
+                }
+            } catch (Throwable e) {
+                blocked = true;
+            }
+            askanWidgetBlocked = blocked;
+        }
+        return askanWidgetBlocked;
+    }
+
+    private CharSequence askanWidgetBlockedText() {
+        String note = "ווידג'ט של בוט שלא אושר בסינון";
+        return TextUtils.isEmpty(messageOwner.message) ? note : messageOwner.message + "\n\n" + note;
+    }
+
     public TL_iv.RichMessage getDisplayRichMessage() {
         if (messageOwner == null) {
             return null;
@@ -8976,6 +9017,7 @@ public class MessageObject {
             return messageOwner.translatedRichMessage;
         }
         if (messageOwner.rich_message == null && getMedia(messageOwner) instanceof TLRPC.TL_messageMediaWidget) {
+            if (askanWidgetBlocked()) return null;
             if (widgetRichMessage == null) {
                 widgetRichMessage = WidgetMedia.richMessage(this, (TLRPC.TL_messageMediaWidget) getMedia(messageOwner));
             }
